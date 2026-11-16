@@ -1,0 +1,11 @@
+# Personal settings and logs (created next to the script/exe)
+ScreenAudioRouter.ini
+ScreenAudioRouter.ini.*.bak
+ScreenAudioRouter.log
+ScreenAudioRouter.log.old
+
+# Third-party fallback tool: users download it from NirSoft
+SoundVolumeView.exe
+
+# Compiled builds go to GitHub Releases, not the repo
+*.exe
