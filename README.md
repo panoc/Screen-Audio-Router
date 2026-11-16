@@ -7,7 +7,7 @@ Drag Spotify to your TV and its music plays on the TV. Drag it back to your desk
 Screen Audio Router is a small Windows tray app written in [AutoHotkey v2](https://www.autohotkey.com/). It needs no driver and no virtual audio cable. It uses the same per-app output setting you find in Windows *Settings → Sound → Volume mixer*, and changes it automatically.
 
 ![Screen Audio Router main window](doc/main-window-dark.png)
-![Main window, light theme](doc/main-window-light.png)
+
 ---
 
 ## Contents
