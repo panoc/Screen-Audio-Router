@@ -343,5 +343,6 @@ To have that fallback, download `SoundVolumeView.exe` and put it **next to the e
 
 ## License
 
-<!-- Pick a license, add it as a LICENSE file, and name it here, e.g.: -->
-Released under the MIT License. See [LICENSE](LICENSE).
+Screen Audio Router is free software, released under the **GNU General Public License v3.0**. See [LICENSE](LICENSE).
+
+You may use, study, share and change it. If you share a changed version, it must also be under GPLv3, with its source code available.
