@@ -6,9 +6,8 @@ Drag Spotify to your TV and its music plays on the TV. Drag it back to your desk
 
 Screen Audio Router is a small Windows tray app written in [AutoHotkey v2](https://www.autohotkey.com/). It needs no driver and no virtual audio cable. It uses the same per-app output setting you find in Windows *Settings → Sound → Volume mixer*, and changes it automatically.
 
-<!-- Screenshot: put your image in docs/ and remove the comment marks around the next line -->
-<!-- ![Screen Audio Router main window](docs/main-window-dark.png) -->
-
+![Screen Audio Router main window](docs/main-window-dark.png)
+![Main window, light theme](docs/main-window-light.png)
 ---
 
 ## Contents
@@ -182,6 +181,8 @@ Browsers and some other apps have one sound for all their windows. Screen Audio 
 - **Follow focused window:** the sound follows whichever window of the app you used last. Turn it on for all apps in *Routing Controls*, or per app in the *Per-App* section.
 
 ### Title-bar menu
+
+![Title-bar menu](docs/title-bar-menu.png)
 
 Ctrl+Right-Click (or the combination you chose) on a window's title bar:
 
