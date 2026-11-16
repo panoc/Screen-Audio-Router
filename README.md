@@ -107,8 +107,8 @@ Ending an override never sends an app back to an "old" device. The app always re
 
 ### Option 1: the exe (easiest)
 
-1. Download `Screen Audio Router.exe` from the [Releases](../../releases/latest) page.
-2. Put it in a folder of its own, for example `C:\Tools\Screen Audio Router\`. Its settings file will be created next to it.
+1. Download the latest `ScreenAudioRouter-x.y.z.zip` from the [Releases](../../releases/latest) page and unzip it.
+2. Put `ScreenAudioRouter.exe` in a folder of its own, for example `C:\Tools\Screen Audio Router\`. Its settings file will be created next to it.
 3. Run it.
 
 No installer is needed and nothing is written outside that folder, except the "Start with Windows" entry if you turn it on.
