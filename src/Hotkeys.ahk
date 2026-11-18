@@ -273,30 +273,54 @@ FormatHotkeyDisplay(hk) {
     return mods . keyDisp
 }
 
+; Tooltip of the shortcut boxes (a function: code in src runs after the window can be built)
+HotkeyBoxTip() {
+    return "Click the box, then press the shortcut.`nBackspace clears it, Esc cancels. Then click Set (or Apply)."
+}
+
 CreateHotkeyCaptureBox(guiObj, opts, kind, key := "", initialHk := "") {
     ctrl := guiObj.AddEdit(opts " ReadOnly Center", FormatHotkeyDisplay(initialHk))
     ctrl.Opt("Background" Th("editBg"))
     ctrl.Opt(initialHk = "" ? "c" Th("hint") : "c" Th("text"))
-    HotkeyBoxMeta[ctrl.Hwnd] := {ctrl: ctrl, kind: kind, key: key, pendingHk: initialHk}
+    HotkeyBoxMeta[ctrl.Hwnd] := {ctrl: ctrl, kind: kind, key: key, pendingHk: initialHk, state: "normal"}
+    AddTip(ctrl, HotkeyBoxTip())
+    if initialHk != ""
+        SetTimer(RecheckHotkeyBoxes, -150)          ; shows the warning if another program uses it
     return ctrl
 }
 
+; A shortcut that another program also uses is shown as "⚠ Ctrl+Alt+M" in the error color,
+; and the box's tooltip says who uses it (see HotkeyTakenBy).
 SetHotkeyBoxValue(ctrl, hk, state := "normal") {
     if !IsObject(ctrl)
         return
-    if HotkeyBoxMeta.Has(ctrl.Hwnd)
+    if HotkeyBoxMeta.Has(ctrl.Hwnd) {
         HotkeyBoxMeta[ctrl.Hwnd].pendingHk := hk
+        HotkeyBoxMeta[ctrl.Hwnd].state := state
+    }
 
-    if state = "error"
-        ctrl.Opt("c" Th("err"))
+    owner := ""
+    if hk != "" {
+        k := HkKey(hk)
+        if HkOwnerCache.Has(k)
+            owner := HkOwnerCache[k]
+        else
+            SetTimer(RecheckHotkeyBoxes, -150)      ; not checked yet: check it in a moment
+    }
+
+    if state = "error" || owner != ""
+        SetCtrlColor(ctrl, Th("err"))
     else if state = "pending"
-        ctrl.Opt("c" Th("warn"))
+        SetCtrlColor(ctrl, Th("warn"))
     else if hk = ""
-        ctrl.Opt("c" Th("hint"))
+        SetCtrlColor(ctrl, Th("hint"))
     else
-        ctrl.Opt("c" Th("text"))
+        SetCtrlColor(ctrl, Th("text"))
 
-    ctrl.Value := FormatHotkeyDisplay(hk)
+    SetCtrlValue(ctrl, (owner != "" ? "⚠ " : "") FormatHotkeyDisplay(hk))
+    HoverTips[ctrl.Hwnd] := owner = "" ? HotkeyBoxTip()
+        : "⚠ Already used by " owner ".`nScreen Audio Router takes it over while it runs, so the other`n"
+        . "program's shortcut doesn't work. Pick another one if you need both.`n`n" HotkeyBoxTip()
 }
 
 GetHotkeyBoxPending(ctrl) {
@@ -340,11 +364,13 @@ StartHotkeyCapture(hwnd) {
     ActiveCaptureHwnd := hwnd
     Suspend(true)
 
-    meta.ctrl.Opt("c" Th("capture"))
-    meta.ctrl.Value := "Press a key..."
+    SetCtrlColor(meta.ctrl, Th("capture"))         ; through the cache, so the old color comes back afterwards
+    SetCtrlValue(meta.ctrl, "Press a key...")
 
+    ; Keys are blocked while recording (S), so a combination another program uses doesn't
+    ; also trigger that program. The modifiers are blocked too and read by physical state.
     ih := InputHook("L0")
-    ih.KeyOpt("{All}", "N")
+    ih.KeyOpt("{All}", "NS")
     ih.KeyOpt("{LCtrl}{RCtrl}{LAlt}{RAlt}{LShift}{RShift}{LWin}{RWin}", "-N")
     ih.OnKeyDown := OnCaptureKeyDown
     ActiveCaptureHook := ih
@@ -364,10 +390,13 @@ StopHotkeyCapture(accepted := false) {
 
     if hwnd && HotkeyBoxMeta.Has(hwnd) {
         meta := HotkeyBoxMeta[hwnd]
+        if accepted && meta.pendingHk != "" && HkOwnerCache.Has(HkKey(meta.pendingHk))
+            HkOwnerCache.Delete(HkKey(meta.pendingHk))     ; check it fresh
         savedHk := GetSavedHotkeyForMeta(meta)
         state := (meta.pendingHk != savedHk) ? "pending" : "normal"
         SetHotkeyBoxValue(meta.ctrl, meta.pendingHk, state)
     }
+    UpdateApplyButton()
 }
 
 GetCaptureModifiers() {
@@ -387,7 +416,12 @@ OnCaptureKeyDown(ih, VK, SC) {
     if ActiveCaptureHwnd = 0 || !HotkeyBoxMeta.Has(ActiveCaptureHwnd)
         return
     meta := HotkeyBoxMeta[ActiveCaptureHwnd]
-    keyName := GetKeyName(Format("vk{:x}sc{:x}", VK, SC))
+    ; Letters and digits are stored by physical key (A-Z, 0-9), so a shortcut recorded while
+    ; e.g. the Greek layout is active is still "o", not a Greek letter.
+    if (VK >= 0x30 && VK <= 0x39) || (VK >= 0x41 && VK <= 0x5A)
+        keyName := Chr(VK)
+    else
+        keyName := GetKeyName(Format("vk{:x}sc{:x}", VK, SC))
     if keyName = ""
         keyName := Format("vk{:x}", VK)
 
@@ -442,7 +476,18 @@ OnApplyHotkey(which, *) {
     else
         val := GetHotkeyBoxPending(HkCtrlReapply)
 
-    RegisterSingleHotkey(which, val, false)
+    if ConfirmHotkeyUse(val, which, SingleHotkeySaved(which), SingleHotkeyCtrl(which))
+        RegisterSingleHotkey(which, val, false)
+}
+
+SingleHotkeySaved(which) {
+    return which = "focused" ? HkOverrideFocused : which = "allmons" ? HkOverrideAllMons
+         : which = "all" ? HkOverrideAll : HkReapply
+}
+
+SingleHotkeyCtrl(which) {
+    return which = "focused" ? HkCtrlFocused : which = "allmons" ? HkCtrlAllMons
+         : which = "all" ? HkCtrlAll : HkCtrlReapply
 }
 
 OnClearHotkey(which, *) {
@@ -462,7 +507,8 @@ OnResetHotkey(which, *) {
         def := DEFAULT_HK_ALL
     else
         def := DEFAULT_HK_REAPPLY
-    RegisterSingleHotkey(which, def, false)
+    if ConfirmHotkeyUse(def, which, SingleHotkeySaved(which), SingleHotkeyCtrl(which))
+        RegisterSingleHotkey(which, def, false)
 }
 
 OnApplyMonitorHotkey(mIdx, *) {
@@ -471,7 +517,8 @@ OnApplyMonitorHotkey(mIdx, *) {
     if !MonHkControls.Has(mIdx)
         return
     val := GetHotkeyBoxPending(MonHkControls[mIdx])
-    RegisterMonitorHotkey(mIdx, val, false)
+    if ConfirmHotkeyUse(val, "mon:" mIdx, MonHotkeys.Get(mIdx, ""), MonHkControls[mIdx])
+        RegisterMonitorHotkey(mIdx, val, false)
 }
 
 OnClearMonitorHotkey(mIdx, *) {
@@ -492,7 +539,8 @@ OnApplyAppHotkey(*) {
     if SelectedApp = "" || !Apps.Has(SelectedApp)
         return
     val := GetHotkeyBoxPending(HkCtrlApp)
-    RegisterAppHotkey(SelectedApp, val, false)
+    if ConfirmHotkeyUse(val, "app:" StrLower(SelectedApp), AppHotkeys.Get(SelectedApp, ""), HkCtrlApp)
+        RegisterAppHotkey(SelectedApp, val, false)
 }
 
 OnClearAppHotkey(*) {
@@ -516,8 +564,8 @@ RefreshHotkeyIndicators() {
         if !IsObject(MainGui) || !WinExist("ahk_id " MainGui.Hwnd)
             return
 
-        LblOvrAllHeader.Value     := "All-Apps Override device  (Hotkey : " FormatHotkeyDisplay(HkOverrideAll) ")"
-        LblOvrAllMonsHeader.Value := "All-Monitors Override device  (Hotkey : " FormatHotkeyDisplay(HkOverrideAllMons) ")"
+        SetCtrlValue(LblOvrAllHeader, "All-Apps Override device  (Hotkey : " FormatHotkeyDisplay(HkOverrideAll) ")")
+        SetCtrlValue(LblOvrAllMonsHeader, "All-Monitors Override device  (Hotkey : " FormatHotkeyDisplay(HkOverrideAllMons) ")")
         UpdateQuickActionButtons()
     }
 }
@@ -527,21 +575,267 @@ RefreshHotkeyIndicators() {
 UpdateQuickActionButtons() {
     if IsObject(BtnHkFocused) {
         if SelectedApp != "" && Apps.Has(SelectedApp) {
-            BtnHkFocused.Text := "Toggle Selected (" SelectedApp ")"
+            SetCtrlText(BtnHkFocused, "Toggle Selected (" SelectedApp ")")
             SetButtonColor(BtnHkFocused, AppOverrideActive.Get(SelectedApp, false) ? BtnColorQuickSelectedOn : BtnColorQuickSelectedOff)
         } else {
-            BtnHkFocused.Text := "Focused App Override"
+            SetCtrlText(BtnHkFocused, "Focused App Override")
             SetButtonColor(BtnHkFocused, BtnColorQuickSelectedOff)
         }
     }
     if IsObject(BtnHkAll) {
         appsOn := AllMode || AnyAppOverrideActive()          ; same rule as "End All Override"
-        BtnHkAll.Text := appsOn ? "End All-Apps Override" : "Toggle All-Apps Override"
+        SetCtrlText(BtnHkAll, appsOn ? "End All-Apps Override" : "Toggle All-Apps Override")
         SetButtonColor(BtnHkAll, appsOn ? BtnColorQuickAllAppsOn : BtnColorQuickAllAppsOff)
     }
     if IsObject(BtnHkAllMons) {
         monsOn := AllMonitorsMode || AnyEffectiveMonitorOverride()   ; same rule as "End Mons Override"
-        BtnHkAllMons.Text := monsOn ? "End All-Monitors Override" : "Toggle All-Monitors Override"
+        SetCtrlText(BtnHkAllMons, monsOn ? "End All-Monitors Override" : "Toggle All-Monitors Override")
         SetButtonColor(BtnHkAllMons, monsOn ? BtnColorQuickAllMonsOn : BtnColorQuickAllMonsOff)
     }
+}
+
+; ------------------------------ SHORTCUT CONFLICT CHECK ---------------------
+; Finds out whether another program already uses a shortcut (idea and script reading from WinPin):
+;  1. shortcuts Windows handles itself, which can't be detected, so they are listed here;
+;  2. asks Windows to register the combination for a moment: when another app (or Explorer,
+;     which owns most Win+letter shortcuts) registered it first, Windows refuses;
+;  3. reads the .ahk files of other running AutoHotkey scripts, whose hook hotkeys ($ ~ * ...)
+;     Windows can't report, and names the script.
+; Not detectable: shortcuts an app only handles while it's focused (Ctrl+S in an editor), compiled
+; AutoHotkey exes and other programs that read the keyboard with a hook. Mouse shortcuts are skipped.
+
+; "^!o" -> mods (RegisterHotKey MOD_ flags) and vk. False for mouse buttons and the wheel.
+HkParse(hk, &mods, &vk) {
+    mods := 0, vk := 0
+    key := RegExReplace(hk, "^[~$*]+")
+    while StrLen(key) > 1 && InStr("^!+#", c := SubStr(key, 1, 1)) {
+        mods |= (c = "!") ? 0x1 : (c = "^") ? 0x2 : (c = "+") ? 0x4 : 0x8
+        key := SubStr(key, 2)
+    }
+    if key = "" || InStr(key, " ") || RegExMatch(key, "i)button|wheel")
+        return false
+    vk := GetKeyVK(key)
+    return vk > 6                                    ; 1-6 are mouse buttons
+}
+
+; Same shortcut, however it is written ("^!o" / "!^O") -> same key. Used by the caches.
+HkKey(hk) {
+    return HkParse(hk, &mods, &vk) ? Format("{}-{:X}", mods, vk) : StrLower(hk)
+}
+
+; Who else uses the shortcut: "WinPin.ahk", "another app or Windows", "Windows (Lock screen)",
+; or "" when it looks free. Screen Audio Router's own shortcuts don't count.
+HotkeyTakenBy(hk) {
+    if hk = "" || !HkParse(hk, &mods, &vk)
+        return ""
+
+    static reserved := [[0x8, 0x4C, "Windows (Lock screen)"], [0x3, 0x2E, "Windows (Ctrl+Alt+Del)"]
+                      , [0x6, 0x1B, "Windows (Task Manager)"], [0x2, 0x1B, "Windows (Start menu)"]
+                      , [0x1, 0x09, "Windows (Alt+Tab)"], [0x1, 0x73, "Windows (Close window)"]]
+    for r in reserved
+        if mods = r[1] && vk = r[2]
+            return r[3]
+
+    ; One of our own registered shortcuts would make Windows refuse because of us: switch it
+    ; off for the moment of the test.
+    own := OwnRegisteredHotkey(mods, vk)
+    if own != ""
+        try Hotkey(own, "Off")
+    static testId := 0xBFF0
+    ok := DllCall("RegisterHotKey", "Ptr", A_ScriptHwnd, "Int", testId, "UInt", mods, "UInt", vk)
+    err := A_LastError
+    if ok
+        DllCall("UnregisterHotKey", "Ptr", A_ScriptHwnd, "Int", testId)
+    if own != ""
+        try Hotkey(own, "On")
+
+    ; A script name is more useful than "another app", and scripts using a keyboard hook
+    ; don't make Windows refuse at all, so the scripts are read in both cases.
+    script := HkScriptOwner(mods, vk)
+    if script != ""
+        return script
+    if !ok && err = 1409                            ; ERROR_HOTKEY_ALREADY_REGISTERED
+        return "another app or Windows"
+    return ""
+}
+
+; The hotkey string we registered for this combination, or "".
+OwnRegisteredHotkey(mods, vk) {
+    for hk in [RegHkFocused, RegHkAllMons, RegHkAll, RegHkReapply]
+        if hk != "" && HkParse(hk, &m, &v) && m = mods && v = vk
+            return hk
+    for regMap in [RegMonHotkeys, RegAppHotkeys]
+        for , hk in regMap
+            if hk != "" && HkParse(hk, &m, &v) && m = mods && v = vk
+                return hk
+    return ""
+}
+
+; Name of another running .ahk script that defines this hotkey, or "".
+HkScriptOwner(mods, vk) {
+    for sc in HkRunningScripts()
+        for k in sc.keys
+            if k[2] = vk && (k[1] = mods || (k[3] && (k[1] & ~mods) = 0))   ; exact, or a * wildcard
+                return sc.name
+    return ""
+}
+
+; Hotkeys of the other running AutoHotkey scripts (.ahk only). The process list (a WMI query,
+; which can take up to a second) is read again only when the window opens (fresh) or after
+; 5 minutes; each script's hotkeys are kept until its file changes.
+HkRunningScripts(fresh := false) {
+    static files := Map(), list := [], listTick := 0
+    if !fresh && listTick && A_TickCount - listTick < 300000
+        return list
+    listTick := A_TickCount
+    list := []
+    ownPid := DllCall("GetCurrentProcessId", "UInt")
+    try {
+        procs := ComObjGet("winmgmts:").ExecQuery("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name LIKE 'AutoHotkey%'")
+        for p in procs {
+            try {
+                if p.ProcessId = ownPid || !RegExMatch(p.CommandLine, 'i)([a-z]:\\[^"]*?\.ahk)', &m)
+                    continue
+                path := m[1]
+                stamp := FileGetTime(path, "M")
+                if !(files.Has(path) && files[path].stamp = stamp)
+                    files[path] := {stamp: stamp, keys: HkParseScript(FileRead(path))}
+                SplitPath(path, &fileName)
+                list.Push({name: fileName, keys: files[path].keys})
+            }
+        }
+    }
+    return list
+}
+
+; [[mods, vk, wildcard], ...] for "hotkey::" lines and Hotkey("...") calls in a script.
+HkParseScript(text) {
+    list := []
+    pos := 1
+    while pos := RegExMatch(text, "im)^[ \t]*([~*$<>^!+#]*)([^\s:&;]+)(?:[ \t]+up)?[ \t]*::", &m, pos) {
+        pos += m.Len
+        HkAddScriptKey(list, m[1], m[2])
+    }
+    pos := 1
+    while pos := RegExMatch(text, "i)\bHotkey\(\s*[`"']([~*$<>^!+#]*)([^`"'\s&]+)[`"']", &m, pos) {
+        pos += m.Len
+        HkAddScriptKey(list, m[1], m[2])
+    }
+    return list
+}
+
+HkAddScriptKey(list, prefix, key) {
+    mods := 0
+    Loop Parse, prefix {
+        switch A_LoopField {
+            case "!": mods |= 0x1
+            case "^": mods |= 0x2
+            case "+": mods |= 0x4
+            case "#": mods |= 0x8
+        }
+    }
+    if (vk := GetKeyVK(key)) > 6
+        list.Push([mods, vk, InStr(prefix, "*") ? true : false])
+}
+
+; A letter, digit, Space, Enter or Tab without Ctrl, Alt or Win would block normal typing.
+HkBlocksTyping(hk) {
+    if !HkParse(hk, &mods, &vk)
+        return false
+    return !(mods & 0xB) && ((vk >= 0x30 && vk <= 0x39) || (vk >= 0x41 && vk <= 0x5A)
+        || vk = 0x20 || vk = 0x0D || vk = 0x09 || (vk >= 0xBA && vk <= 0xE2))
+}
+
+; Asked before a new shortcut is set (Set, Reset, Apply). Returns true to go ahead. On No the
+; box goes back to the saved shortcut. dupKey is the IsHotkeyDuplicate key of the box.
+ConfirmHotkeyUse(newHk, dupKey, savedHk, ctrl := "") {
+    if newHk = ""
+        return true
+    if HkBlocksTyping(newHk) {
+        try MainGui.Opt("+OwnDialogs")
+        MsgBox(FormatHotkeyDisplay(newHk) " on its own would block normal typing.`n"
+            . "Add Ctrl, Alt or Win to it.", "Shortcut Not Allowed", "Icon!")
+        SetHotkeyBoxValue(ctrl, savedHk, "normal")
+        return false
+    }
+    if StrLower(newHk) = StrLower(savedHk)            ; already this box's shortcut
+        return true
+    if IsHotkeyDuplicate(newHk, dupKey)               ; our own duplicate: Register... reports it
+        return true
+
+    owner := HotkeyTakenBy(newHk)
+    HkOwnerCache[HkKey(newHk)] := owner
+    if owner = "" {
+        SetHotkeyBoxValue(ctrl, newHk, "pending")
+        return true
+    }
+    try MainGui.Opt("+OwnDialogs")
+    ans := MsgBox(FormatHotkeyDisplay(newHk) " is already used by " owner ".`n`n"
+        . "If you use it anyway, Screen Audio Router takes it over: the other shortcut won't work "
+        . "while Screen Audio Router is running.`n`nUse it anyway?", "Shortcut Already In Use", "YesNo Icon! Default2")
+    if ans != "Yes" {
+        SetHotkeyBoxValue(ctrl, savedHk, "normal")
+        return false
+    }
+    HkTakenShown[HkKey(newHk)] := true                ; you know already: no notice at startup
+    SaveSettings()
+    return true
+}
+
+; Checks every shortcut box again and redraws the warnings. fresh = forget earlier results
+; (when the window opens: another program may have started since).
+RecheckHotkeyBoxes(fresh := false) {
+    if fresh {
+        HkOwnerCache.Clear()
+        HkRunningScripts(true)                         ; read the running scripts once, now
+    }
+    for hwnd, meta in HotkeyBoxMeta.Clone() {
+        if hwnd = ActiveCaptureHwnd || meta.pendingHk = ""
+            continue
+        k := HkKey(meta.pendingHk)
+        if !HkOwnerCache.Has(k)
+            HkOwnerCache[k] := HotkeyTakenBy(meta.pendingHk)
+        try SetHotkeyBoxValue(meta.ctrl, meta.pendingHk, meta.state)
+    }
+}
+
+; Once after start: tells about saved shortcuts that another program also uses. Each one is
+; reported once (remembered in the INI as TakenShortcuts) and again only after it was free.
+StartupHotkeyCheck() {
+    HkRunningScripts(true)
+    items := [[HkOverrideFocused, "Focused App Override"], [HkOverrideAllMons, "All-Monitors Override"]
+            , [HkOverrideAll, "All-Apps Override"], [HkReapply, "Re-apply Routing"]]
+    for mIdx, hk in RegMonHotkeys
+        items.Push([hk, "Monitor " mIdx " Override"])
+    for app, hk in RegAppHotkeys
+        items.Push([hk, app])
+
+    lines := []
+    changed := false
+    for it in items {
+        if it[1] = "" || !HkParse(it[1], &mods, &vk)
+            continue
+        k := HkKey(it[1])
+        owner := HotkeyTakenBy(it[1])
+        HkOwnerCache[k] := owner
+        if owner = "" {
+            if HkTakenShown.Has(k)
+                HkTakenShown.Delete(k), changed := true
+            continue
+        }
+        if HkTakenShown.Has(k)
+            continue
+        HkTakenShown[k] := true, changed := true
+        lines.Push(FormatHotkeyDisplay(it[1]) "  (" it[2] ")  :  " owner)
+    }
+    if changed
+        SaveSettings()
+    if !lines.Length
+        return
+    msg := (lines.Length = 1 ? "Shortcut also used by another program :" : "Shortcuts also used by other programs :")
+    for l in lines
+        msg .= "`n" l
+    msg .= "`nScreen Audio Router is using " (lines.Length = 1 ? "it" : "them") ". You can change it in the window."
+    ShowOsdToast(msg, MonitorGetPrimary(), "warn")
+    LogLine("Startup: " StrReplace(msg, "`n", " / "))
 }

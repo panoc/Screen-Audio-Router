@@ -9,8 +9,9 @@
 ; ------------------------------ MAIN GUI ------------------------------------
 BuildMainGui() {
     global MainGui, BtnToggleRouting, AppLV, StatusLV, BtnRemoveApp, ChkStartMin, EdtPollMs, EdtToastSec
-    global ChkAutoStart, ChkDarkTheme, ChkFollowFocus, ChkAppFollowFocus, DdlTitleBarKey
-    global ChkAppFollowMon, DdlAppFixedDevice
+    global ChkAutoStart, ChkFollowFocus, DdlAppFollowFocus, DdlTitleBarKey
+    global ChkAppFollowMon, DdlAppFixedDevice, ChkAppSystemMic, ChkAppMicOn, DdlAppMic, ChkAppHideTray
+    global MonMicChecks, MonMicDropdowns, MonMicDropdownIds, MonEnableChecks
     global LblSelAppName, DdlAppOverrideDevice, BtnToggleAppOvr, BtnResetAppOvr
     global HkCtrlApp, BtnSetAppHk, BtnClrAppHk, BtnRstAppHk
     global ChkDisableAll, ChkDisableMon, ChkDisableApp
@@ -40,8 +41,8 @@ BuildMainGui() {
     BuiltMonSignature := GetMonitorLayoutSignature()
     monInfos := CollectMonitorInfos()
 
-    ; Monitor frame ends with the left column (y = 650); its blocks are spread evenly inside
-    leftEndY      := 650
+    ; Monitor frame ends with the left column (y = 690); its blocks are spread evenly inside
+    leftEndY      := 690
     monSectionH   := leftEndY - 60
     rightEndY     := 60 + monSectionH
     bodyEndY      := Max(leftEndY, rightEndY)
@@ -50,16 +51,14 @@ BuildMainGui() {
     hkSectionY    := bodyEndY + 8
     hkSectionH    := 154
 
-    ; Reset Overrides & Windows Mixer bar + Apply/Close buttons above Status Bar
-    resetSectionY := hkSectionY + hkSectionH + 8
-    resetSectionH := 56
-
-    statusBarY    := resetSectionY + resetSectionH + 8
+    ; Status bar with Apply / Close at its right end
+    statusBarY    := hkSectionY + hkSectionH + 8
 
     MainGui := Gui("-MaximizeBox", "Screen Audio Router")
     MainGui.SetFont("s9", "Segoe UI")
     MainGui.BackColor := Th("bg")
     MainGui.OnEvent("Close", OnGuiCloseRequest)
+    MainGui.AddButton("x0 y0 w0 h0")               ; invisible first control: takes the focus when the window opens
 
     iconSrc := IconSource(101)
     if !iconSrc && A_IsCompiled
@@ -104,122 +103,150 @@ BuildMainGui() {
     btnIdMon := AddColoredButton(MainGui, "x902 y16 w96 h28", "Identify Mons", BtnColorIdentifyMons)
     btnIdMon.OnEvent("Click", ShowMonitorNumbers)
 
-    ; --- Column 1 (10 lines high): Tracked Applications ---
+    ; --- Tracked Applications: the table, and below a thin line the selected app's settings ---
+    ; (one frame, y60-548; the table fills the space above the line)
     MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    MainGui.AddGroupBox("x16 y60 w262 h258", "Tracked Applications (Check to Enable)")
+    MainGui.AddGroupBox("x16 y60 w718 h488", "Tracked Applications  (Check to Enable)")
 
-    AppLV := MainGui.AddListView("x28 y82 w238 r10 -Multi Grid Checked", ["Application", "Mon"])
-    AppLV.ModifyCol(1, 186)
-    AppLV.ModifyCol(2, 38)
+    AppLV := MainGui.AddListView("x28 y82 w694 h287 -Multi Grid Checked -HScroll", ["Application", "Status", "Output", "Input"])
+    ; taller rows: a list's row height follows its small icons, so it gets an empty 1 px wide image list
+    rowPx := Round(Max(18, Min(TABLE_ROW_HEIGHT, 40)) * A_ScreenDPI / 96)
+    AppLV.SetImageList(DllCall("comctl32\ImageList_Create", "Int", 1, "Int", rowPx, "UInt", 0x20, "Int", 1, "Int", 0, "Ptr"), 1)
+    AppLV.ModifyCol(1, 150)
+    AppLV.ModifyCol(2, 132)
+    AppLV.ModifyCol(3, 202)
+    AppLV.ModifyCol(4, 186)
     AppLV.OnEvent("ItemSelect", OnAppSelect)
     AppLV.OnEvent("Click", OnAppClick)
     AppLV.OnEvent("ItemCheck", OnAppCheck)
 
-    ; --- Column 2 (10 lines high): Routed Audio Output Status ---
-    MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    MainGui.AddGroupBox("x286 y60 w448 h258", "Routed Audio Output Status")
-
-    StatusLV := MainGui.AddListView("x298 y82 w424 r10 -Multi Grid -HScroll", ["App (.exe)", "Status & Active Routing Device"])
-    StatusLV.ModifyCol(1, 120)
-    StatusLV.ModifyCol(2, 292)
-    StatusLV.OnEvent("ItemSelect", OnStatusSelect)
-    StatusLV.OnEvent("Click", OnStatusClick)
-
-    ; --- Outside Below Both Tables: Remove Selected Button ---
-    MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
-    BtnRemoveApp := AddColoredButton(MainGui, "x16 y324 w718 h28 Disabled", "Remove Selected Application from Table", BtnColorRemoveApp)
-    BtnRemoveApp.OnEvent("Click", OnRemoveApp)
-
-    ; --- Below Remove Button (A): Selected Application Per-App Override ---
-    MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    MainGui.AddGroupBox("x16 y360 w718 h148", "Per-App Override && Shortcut  (Select an app above)")
+    MainGui.AddText("x28 y379 w694 h1 Background" Th("sepLine"), "")    ; table | selected app
 
     ; Row 1: Selected App + Override Toggle Button
     MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
-    MainGui.AddText("x28 y384 w96", "Selected App :")
-    MainGui.SetFont("s9 Bold c" Th("accent"), "Segoe UI")
-    LblSelAppName := MainGui.AddText("x138 y384 w456", "(None selected)")
+    MainGui.AddText("x28 y394 w96", "Selected App :")
+    selCol := NormalizeHexColor(SelectedAppColor)
+    selSize := Max(9, Min(SELECTED_APP_SIZE, 14))
+    MainGui.SetFont("s" selSize " Bold c" (selCol != "" ? selCol : Th("accent")), "Segoe UI")
+    LblSelAppName := MainGui.AddText("x138 y" (394 - (selSize - 9)) " w334 h" (16 + 2 * (selSize - 9)), "(None selected)")
 
     MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
-    BtnToggleAppOvr := AddColoredButton(MainGui, "x602 y380 w120 h25 Disabled", "Override : OFF", BtnColorAppOvrOff)
+    BtnRemoveApp := AddColoredButton(MainGui, "x480 y390 w116 h25 Disabled", "Remove App", BtnColorRemoveApp)
+    BtnRemoveApp.OnEvent("Click", OnRemoveApp)
+    AddTip(BtnRemoveApp, "Remove the selected app from the table (it goes back to the Windows default device).")
+    BtnToggleAppOvr := AddColoredButton(MainGui, "x602 y390 w120 h25 Disabled", "Override : OFF", BtnColorAppOvrOff)
     BtnToggleAppOvr.OnEvent("Click", OnToggleSelectedAppOverride)
     AddTip(BtnToggleAppOvr, "Turn this app's override on or off.")
 
-    ; Row 2: Override Device + Reset Override Button
+    ; Row 2: App Shortcut (Capture Box + Set / Clear / Reset) + Follow focus
     MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
-    MainGui.AddText("x28 y414 w106", "Override Device :")
-    DdlAppOverrideDevice := MainGui.AddDropDownList("x138 y411 w456 Disabled", ["Windows Default Device"])
-    DdlAppOverrideDevice.OnEvent("Change", OnSelectedAppOverrideDeviceChanged)
-    AddTip(DdlAppOverrideDevice, "Device this app uses while its override is ON, whatever monitor it is on.")
+    MainGui.AddText("x28 y424 w96", "App Shortcut :")
+    HkCtrlApp := CreateHotkeyCaptureBox(MainGui, "x138 y421 w166 h23 Disabled", "app", "", "")
 
-    BtnResetAppOvr := AddColoredButton(MainGui, "x602 y410 w120 h25 Disabled", "Reset Override", BtnColorResetAppOvr)
-    BtnResetAppOvr.OnEvent("Click", OnResetSelectedAppOverride)
-
-    ; Row 3: App Shortcut (Capture Box + Set / Clear / Reset)
-    MainGui.AddText("x28 y444 w96", "App Shortcut :")
-    HkCtrlApp := CreateHotkeyCaptureBox(MainGui, "x138 y441 w166 h23 Disabled", "app", "", "")
-
-    BtnSetAppHk := AddColoredButton(MainGui, "x310 y440 w50 h24 Disabled", "Set", BtnColorHkSet)
+    BtnSetAppHk := AddColoredButton(MainGui, "x310 y420 w50 h24 Disabled", "Set", BtnColorHkSet)
     BtnSetAppHk.OnEvent("Click", OnApplyAppHotkey)
-    BtnClrAppHk := AddColoredButton(MainGui, "x364 y440 w50 h24 Disabled", "Clear", BtnColorHkClear)
+    BtnClrAppHk := AddColoredButton(MainGui, "x364 y420 w50 h24 Disabled", "Clear", BtnColorHkClear)
     BtnClrAppHk.OnEvent("Click", OnClearAppHotkey)
-    BtnRstAppHk := AddColoredButton(MainGui, "x418 y440 w50 h24 Disabled", "Reset", BtnColorHkReset)
+    BtnRstAppHk := AddColoredButton(MainGui, "x418 y420 w50 h24 Disabled", "Reset", BtnColorHkReset)
     BtnRstAppHk.OnEvent("Click", OnResetAppHotkey)
 
-    ; Per-app "Follow focused window": checked / unchecked / third state = use the global setting
+    ; Per-app "Follow focused window": Global (the setting in Routing Controls) / On / Off
     MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
-    ChkAppFollowFocus := MainGui.AddCheckbox("x480 y442 w162 h20 Check3 Disabled", "Follow focused window")
-    ChkAppFollowFocus.Value := -1
-    ChkAppFollowFocus.OnEvent("Click", OnAppFollowFocusChanged)
-    AddTip(ChkAppFollowFocus, "Checked: this app's audio follows whichever of its windows you used last.`n"
-        . "Unchecked: it follows its first window.`nGray: use the global setting in Routing Controls.")
-    MainGui.SetFont("s8 Norm c" Th("muted"), "Segoe UI")
-    MainGui.AddText("x644 y445 w84", "(gray = global)")
-    MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
+    AddTip(MainGui.AddText("x480 y424 w82 +0x100", "Follow focus :")
+        , "Which of this app's windows its audio follows (for apps with several windows, like browsers).")
+    DdlAppFollowFocus := MainGui.AddDropDownList("x566 y421 w156 Disabled", AppFollowFocusLabels())
+    DdlAppFollowFocus.Choose(1)
+    DdlAppFollowFocus.OnEvent("Change", OnAppFollowFocusChanged)
+    AddTip(DdlAppFollowFocus, "On: the audio follows whichever of the app's windows you used last.`n"
+        . "Off: it follows its first window (or the one picked with `"Audio follows this window`").`n"
+        . "Global: use `"Follow focused window`" in Routing Controls & Options.")
 
-    ; Row 4: Follow monitor / fixed device
-    ChkAppFollowMon := MainGui.AddCheckbox("x28 y472 w106 h20 Disabled", "Follow monitor")
+    ; Row 3: Follow monitor / fixed device
+    ChkAppFollowMon := MainGui.AddCheckbox("x28 y452 w106 h20 Disabled", "Follow monitor")
     ChkAppFollowMon.OnEvent("Click", OnAppFollowMonitorChanged)
     AddTip(ChkAppFollowMon, "Checked: the app plays on the output of the monitor its window is on.`n"
         . "Unchecked: it always plays on the device on the right, wherever its window is.`n"
         . "Overrides, temporary overrides and the All-Apps override still apply on top.")
-    DdlAppFixedDevice := MainGui.AddDropDownList("x138 y471 w456 Disabled", ["Windows Default Device"])
+    DdlAppFixedDevice := MainGui.AddDropDownList("x138 y451 w330 Disabled", ["Windows Default Device"])
     DdlAppFixedDevice.OnEvent("Change", OnAppFixedDeviceChanged)
     AddTip(DdlAppFixedDevice, "Device this app always uses while Follow monitor is unchecked.")
 
+    ; Row 4: Override Output
+    MainGui.AddText("x28 y484 w106", "Override Output :")
+    DdlAppOverrideDevice := MainGui.AddDropDownList("x138 y481 w330 Disabled", ["Windows Default Device"])
+    DdlAppOverrideDevice.OnEvent("Change", OnSelectedAppOverrideDeviceChanged)
+    AddTip(DdlAppOverrideDevice, "Device this app plays on while its override is ON, whatever monitor it is on.")
+    ChkAppHideTray := MainGui.AddCheckbox("x480 y482 w242 h20 Disabled", "Hide tray icon")
+    ChkAppHideTray.OnEvent("Click", OnAppHideTrayChanged)
+    AddTip(ChkAppHideTray, "No extra tray icon for this app while its override is ON.`n"
+        . "The override still shows in the main tray icon's tooltip and in the table.")
+
+    ; Row 5: Override Mic + Windows default mic + Reset Override (far right)
+    ChkAppMicOn := MainGui.AddCheckbox("x28 y512 w106 h20 Disabled", "Override Mic")
+    ChkAppMicOn.OnEvent("Click", OnAppMicOnChanged)
+    AddTip(ChkAppMicOn, "Checked: while this app's override is ON, it uses the microphone on the right.`n"
+        . "Unchecked: overrides change only the sound; the app keeps the microphone of the monitor it is on`n"
+        . "(the one paired with that monitor's Output in the Devices window).")
+    DdlAppMic := MainGui.AddDropDownList("x138 y511 w330 Disabled", ["Paired : Windows default mic"])
+    DdlAppMic.OnEvent("Change", OnAppMicDeviceChanged)
+    AddTip(DdlAppMic, "Microphone used while the override is ON and Override Mic is checked.`n"
+        . "Paired = the microphone paired with the Override Output device (Devices window).")
+    ChkAppSystemMic := MainGui.AddCheckbox("x480 y512 w116 h20 Disabled", "Win default mic")
+    ChkAppSystemMic.OnEvent("Click", OnAppSystemMicChanged)
+    AddTip(ChkAppSystemMic, "Also make this app's microphone the Windows default microphone (for the whole PC)`n"
+        . "whenever it changes. For apps that ignore their own per-app microphone.")
+
+    BtnResetAppOvr := AddColoredButton(MainGui, "x602 y510 w120 h25 Disabled", "Reset Override", BtnColorResetAppOvr)
+    BtnResetAppOvr.OnEvent("Click", OnResetSelectedAppOverride)
+    AddTip(BtnResetAppOvr, "Set this app's override back to its defaults:`noff, Override Output = Windows Default, Override Mic off.")
+
     ; --- Below Per-App Override (B): Global Override Settings & Conflict Guard (Horizontal Two-Column Layout) ---
     MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    MainGui.AddGroupBox("x16 y516 w718 h134", "Global Override Settings && Conflict Guard")
+    MainGui.AddGroupBox("x16 y556 w718 h134", "Global Override Settings && Conflict Guard")
 
     ; Left Half: All-Apps Override
     MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    LblOvrAllHeader := MainGui.AddText("x28 y536 w340", "All-Apps Override device  (Hotkey : " FormatHotkeyDisplay(HkOverrideAll) ")")
+    LblOvrAllHeader := MainGui.AddText("x28 y576 w340", "All-Apps Override device  (Hotkey : " FormatHotkeyDisplay(HkOverrideAll) ")")
     MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
 
-    DdlAllAppsDevice := MainGui.AddDropDownList("x28 y555 w340", ["Windows Default Device"])
+    DdlAllAppsDevice := MainGui.AddDropDownList("x28 y595 w340", ["Windows Default Device"])
     DdlAllAppsDevice.OnEvent("Change", OnAllAppsOverrideDeviceChanged)
     AddTip(DdlAllAppsDevice, "Device used by Toggle All-Apps Override (Global Hotkeys & Quick Actions).")
 
     ; Right Half: All-Monitors Override
     MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    LblOvrAllMonsHeader := MainGui.AddText("x382 y536 w340", "All-Monitors Override device  (Hotkey : " FormatHotkeyDisplay(HkOverrideAllMons) ")")
+    LblOvrAllMonsHeader := MainGui.AddText("x382 y576 w340", "All-Monitors Override device  (Hotkey : " FormatHotkeyDisplay(HkOverrideAllMons) ")")
     MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
 
-    DdlAllMonsDevice := MainGui.AddDropDownList("x382 y555 w340", ["Windows Default Device"])
+    DdlAllMonsDevice := MainGui.AddDropDownList("x382 y595 w340", ["Windows Default Device"])
     DdlAllMonsDevice.OnEvent("Change", OnAllMonsOverrideDeviceChanged)
     AddTip(DdlAllMonsDevice, "Device used by Toggle All-Monitors Override (Global Hotkeys & Quick Actions).")
 
     ; Bottom Row: Conflict Guard
     MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
-    ChkAvoidConflicts := MainGui.AddCheckbox("x28 y588 w264 h20", "Avoid contradicting overrides (auto-prevent)")
+    ChkAvoidConflicts := MainGui.AddCheckbox("x28 y628 w264 h20", "Avoid contradicting overrides (auto-prevent)")
     AddTip(ChkAvoidConflicts, "Automatically prevent override settings that contradict each other.")
     ChkAvoidConflicts.Value := AvoidConflicts ? 1 : 0
     ChkAvoidConflicts.OnEvent("Click", OnToggleAvoidConflicts)
 
-    BtnFixConflicts := AddColoredButton(MainGui, "x298 y586 w54 h23 Disabled", "Fix", BtnColorFixConflicts)
+    BtnFixConflicts := AddColoredButton(MainGui, "x298 y626 w54 h23 Disabled", "Fix", BtnColorFixConflicts)
     BtnFixConflicts.OnEvent("Click", ResolveAllConflicts)
+
+    ; Resets: right half, under the All-Monitors list (3 x 108 + 2 x 8 = its 340 px)
+    BtnResetAllOverrides := AddColoredButton(MainGui, "x382 y625 w108 h25", "Reset Overrides", BtnColorResetOverrides)
+    BtnResetAllOverrides.OnEvent("Click", ResetOverridesToDefaults)
+    AddTip(BtnResetAllOverrides, "Set every override back to its default (asks first):`n"
+        . "all overrides off, all override devices back to Windows Default, all Override Mic / Mic off.`n"
+        . "Tracked apps, monitor outputs, hotkeys, names, microphone pairs and options stay.")
+    BtnResetWinMixer := AddColoredButton(MainGui, "x498 y625 w108 h25", "Reset Win Mixer", BtnColorResetWinMixer)
+    BtnResetWinMixer.OnEvent("Click", ResetWindowsVolumeMixer)
+    AddTip(BtnResetWinMixer, "Put every app (tracked or not) back on the Windows default device and microphone,`n"
+        . "end all overrides and turn routing OFF. Volumes are not changed.")
+    btnResetAll := AddColoredButton(MainGui, "x614 y625 w108 h25", "Reset All...", BtnColorResetSettings)
+    btnResetAll.OnEvent("Click", ResetAllSettings)
+    AddTip(btnResetAll, "Return Screen Audio Router to its first-start settings (asks first, keeps a backup).")
     MainGui.SetFont("s8 Bold c" Th("ok"), "Segoe UI")
-    LblConflictStatus := MainGui.AddText("x28 y614 w694 h30", "✓ No rule or override contradictions")   ; 2 lines
+    LblConflictStatus := MainGui.AddText("x28 y654 w694 h30", "✓ No rule or override contradictions")   ; 2 lines
 
     ; --- Column 3 (Right): Global Monitor Rules & Overrides (4 monitor blocks, frame ends with the left column) ---
     monHeader := Format("Global Monitor Rules && Overrides  ({1} / {2} Detected)", DetectedMonCount, MAX_MONITORS)
@@ -237,9 +264,14 @@ BuildMainGui() {
     MonHkSetButtons.Clear()
     MonHkClrButtons.Clear()
     MonHkRstButtons.Clear()
+    MonMicChecks.Clear()
+    MonEnableChecks.Clear()
+    MonMicDropdowns.Clear()
+    MonMicDropdownIds.Clear()
 
-    ; 4 blocks of 107 px (rows 31 px apart, as elsewhere): first at y82, last ending 14 px above the frame bottom, equal gaps
-    monBlockH := 107
+    ; 4 blocks of 134 px (rows 30 px apart, as in the Per-App section): first at y82, last ending
+    ; 14 px above the frame bottom, equal gaps
+    monBlockH := 134
     monStep := Max(monBlockH + 12, (60 + monSectionH - 14 - monBlockH - 82) // Max(MAX_MONITORS - 1, 1))
     yPos := 82
     for info in monInfos {
@@ -258,46 +290,71 @@ BuildMainGui() {
             titleTxt := Format("Monitor {1}  (Not Detected)", mIdx)
             MainGui.SetFont("s9 Bold c" Th("muted"), "Segoe UI")
         }
-        MainGui.AddText("x756 y" yPos " w364", titleTxt)
+        MainGui.AddText("x756 y" yPos " w286", titleTxt)
+
+        ; Enabled (right end of the title line): unticked = this monitor gives the Windows default
+        MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
+        enChk := MainGui.AddCheckbox("x1050 y" (yPos - 2) " w70 h20" disOpt, "Enabled")
+        enChk.Value := IsMonitorDisabled(mIdx) ? 0 : 1
+        enChk.OnEvent("Click", OnMonitorEnabledChanged.Bind(mIdx))
+        AddTip(enChk, "Unticked: apps on this monitor play on the Windows default device and microphone,`n"
+            . "its override and hotkey are off. Its Output, Ovrd and Mic settings are kept.")
+        MonEnableChecks[mIdx] := enChk
 
         ; Output Row
         MainGui.SetFont("s9 Norm " (isConn ? "c" Th("text") : "c" Th("muted")), "Segoe UI")
-        MainGui.AddText("x756 y" (yPos + 25) " w48", "Output :")
-        ddl := MainGui.AddDropDownList("x808 y" (yPos + 22) " w312" disOpt, ["Disabled", "Windows Default Device"])
+        MainGui.AddText("x756 y" (yPos + 24) " w48", "Output :")
+        ddl := MainGui.AddDropDownList("x808 y" (yPos + 21) " w312" subDisOpt, ["Windows Default Device"])
         ddl.OnEvent("Change", OnGlobalRuleChanged.Bind(mIdx))
         MonDropdowns[mIdx] := ddl
-        MonDropdownIds[mIdx] := [DISABLED_MONITOR, DEFAULT_DEVICE]
+        MonDropdownIds[mIdx] := [DEFAULT_DEVICE]
 
         ; Ovrd Row
         MainGui.SetFont("s9 Norm " (isSubEnabled ? "c" Th("text") : "c" Th("muted")), "Segoe UI")
-        MonOvrLabels[mIdx] := MainGui.AddText("x756 y" (yPos + 56) " w48", "Ovrd :")
+        MonOvrLabels[mIdx] := MainGui.AddText("x756 y" (yPos + 54) " w48", "Ovrd :")
         MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
-        ovrDdl := MainGui.AddDropDownList("x808 y" (yPos + 53) " w234" subDisOpt, ["Windows Default Device"])
+        ovrDdl := MainGui.AddDropDownList("x808 y" (yPos + 51) " w234" subDisOpt, ["Windows Default Device"])
         ovrDdl.OnEvent("Change", OnMonitorOverrideDeviceChanged.Bind(mIdx))
         MonOvrDropdowns[mIdx] := ovrDdl
         MonOvrDropdownIds[mIdx] := [DEFAULT_DEVICE]
 
         isOvrOn := isSubEnabled && MonitorOverrideActive.Get(mIdx, false)
-        ovrBtn := AddColoredButton(MainGui, "x1046 y" (yPos + 52) " w74 h24" subDisOpt, isOvrOn ? "Ovr : ON" : "Ovr : OFF", isOvrOn ? BtnColorMonOvrOn : BtnColorMonOvrOff)
+        ovrBtn := AddColoredButton(MainGui, "x1046 y" (yPos + 50) " w74 h24" subDisOpt, isOvrOn ? "Ovrd : ON" : "Ovrd : OFF", isOvrOn ? BtnColorMonOvrOn : BtnColorMonOvrOff)
         ovrBtn.OnEvent("Click", ToggleMonitorOverrideByIndex.Bind(mIdx))
         MonOvrButtons[mIdx] := ovrBtn
 
+        ; Mic Row: Mic override (counts while this monitor's override is on) + its microphone
+        MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
+        micChk := MainGui.AddCheckbox("x756 y" (yPos + 82) " w50 h20" subDisOpt, "Mic")
+        micChk.Value := MonMicOn.Has(mIdx) ? 1 : 0
+        micChk.OnEvent("Click", OnMonMicOnChanged.Bind(mIdx))
+        AddTip(micChk, "Mic override. Checked: while this monitor's override is ON, apps on it use the microphone on the right.`n"
+            . "Unchecked: overrides change only the sound; apps keep this monitor's microphone`n"
+            . "(the one paired with its Output in the Devices window).")
+        MonMicChecks[mIdx] := micChk
+        micDdl := MainGui.AddDropDownList("x808 y" (yPos + 81) " w312 Disabled", ["Paired : Windows default mic"])
+        micDdl.OnEvent("Change", OnMonMicDeviceChanged.Bind(mIdx))
+        AddTip(micDdl, "Microphone used while this monitor's override is ON and Mic is checked.`n"
+            . "Paired = the microphone paired with the Ovrd device (Devices window).")
+        MonMicDropdowns[mIdx] := micDdl
+        MonMicDropdownIds[mIdx] := [""]
+
         ; Hotkey Row (Capture Box + Set / Clear / Reset)
         MainGui.SetFont("s9 Norm " (isSubEnabled ? "c" Th("text2") : "c" Th("muted")), "Segoe UI")
-        MonHkLabels[mIdx] := MainGui.AddText("x756 y" (yPos + 87) " w48", "Hotkey :")
+        MonHkLabels[mIdx] := MainGui.AddText("x756 y" (yPos + 114) " w48", "Hotkey :")
         MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
-        mHkCtrl := CreateHotkeyCaptureBox(MainGui, "x808 y" (yPos + 84) " w154 h23" subDisOpt, "mon", mIdx, MonHotkeys.Get(mIdx, ""))
+        mHkCtrl := CreateHotkeyCaptureBox(MainGui, "x808 y" (yPos + 111) " w154 h23" subDisOpt, "mon", mIdx, MonHotkeys.Get(mIdx, ""))
         MonHkControls[mIdx] := mHkCtrl
 
-        btnMSet := AddColoredButton(MainGui, "x968 y" (yPos + 83) " w48 h24" subDisOpt, "Set", BtnColorHkSet)
+        btnMSet := AddColoredButton(MainGui, "x968 y" (yPos + 110) " w48 h24" subDisOpt, "Set", BtnColorHkSet)
         btnMSet.OnEvent("Click", OnApplyMonitorHotkey.Bind(mIdx))
         MonHkSetButtons[mIdx] := btnMSet
 
-        btnMClr := AddColoredButton(MainGui, "x1020 y" (yPos + 83) " w48 h24" subDisOpt, "Clear", BtnColorHkClear)
+        btnMClr := AddColoredButton(MainGui, "x1020 y" (yPos + 110) " w48 h24" subDisOpt, "Clear", BtnColorHkClear)
         btnMClr.OnEvent("Click", OnClearMonitorHotkey.Bind(mIdx))
         MonHkClrButtons[mIdx] := btnMClr
 
-        btnMRst := AddColoredButton(MainGui, "x1072 y" (yPos + 83) " w48 h24" subDisOpt, "Reset", BtnColorHkReset)
+        btnMRst := AddColoredButton(MainGui, "x1072 y" (yPos + 110) " w48 h24" subDisOpt, "Reset", BtnColorHkReset)
         btnMRst.OnEvent("Click", OnResetMonitorHotkey.Bind(mIdx))
         MonHkRstButtons[mIdx] := btnMRst
 
@@ -438,14 +495,16 @@ BuildMainGui() {
         , EventsActive ? "How often (ms) window positions are re-checked as a safety net.`nWindow moves are normally picked up instantly."
                        : "How often (ms) window positions are checked.")
     EdtPollMs := MainGui.AddEdit("x" (cB + 64) " y" (r3 - 1) " w56 h22 Number", EventsActive ? FallbackPollMs : PollMs)
+    EdtPollMs.OnEvent("Change", (*) => UpdateApplyButton())
     MainGui.AddText("x" (cB + 126) " y" (r3 + 2) " w24", "ms")
 
     AddTip(MainGui.AddText("x1010 y" (r3 + 2) " w46 +0x100", "Notify :")
         , "How many seconds notifications stay on screen (1-30).`nWarnings, such as a missing device, stay twice as long (at least 6 s).")
     EdtToastSec := MainGui.AddEdit("x1056 y" (r3 - 1) " w34 h22 Number", ToastSec)
+    EdtToastSec.OnEvent("Change", (*) => UpdateApplyButton())
     MainGui.AddText("x1094 y" (r3 + 2) " w14", "s")
 
-    ; Row 4: Startup & look
+    ; Row 4: Startup
     ChkStartMin := MainGui.AddCheckbox("x" cA " y" r4 " w156 h20", "Start in tray")
     ChkStartMin.Value := StartMinimized ? 1 : 0
     ChkStartMin.OnEvent("Click", OnSettingChanged)
@@ -456,49 +515,28 @@ BuildMainGui() {
     ChkAutoStart.OnEvent("Click", OnAutoStartChanged)
     AddTip(ChkAutoStart, "Start Screen Audio Router when you sign in to Windows.")
 
-    ChkDarkTheme := MainGui.AddCheckbox("x" cC " y" r4 " w130 h20", "Dark theme")
-    ChkDarkTheme.Value := DarkTheme ? 1 : 0
-    ChkDarkTheme.OnEvent("Click", OnDarkThemeChanged)
-    AddTip(ChkDarkTheme, "Switch between light and dark colors.`nColors are set in the THEME section at the top of the script.")
-
     ; Status line
     MainGui.SetFont("s8 Bold c" Th("ok"), "Segoe UI")
     LblRoutingModeNote := MainGui.AddText("x" rx " y" (hkSectionY + 128) " w529 h18", "● Active : Monitor Routing + Per-App Routing enabled")
 
-    ; --- Reset Overrides & Windows Mixer Bar (w816) + Apply & Close Buttons ---
-    MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    MainGui.AddGroupBox("x16 y" resetSectionY " w816 h" resetSectionH, "Reset Overrides && Windows Mixer")
-
-    MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
-    BtnResetAppOverrides := AddColoredButton(MainGui, "x28 y" (resetSectionY + 20) " w190 h26", "Reset App Overrides", BtnColorResetOverrides)
-    BtnResetAppOverrides.OnEvent("Click", ResetAllAppOverrides)
-
-    BtnResetMonOverrides := AddColoredButton(MainGui, "x226 y" (resetSectionY + 20) " w190 h26", "Reset Monitor Overrides", BtnColorResetOverrides)
-    BtnResetMonOverrides.OnEvent("Click", ResetAllMonitorOverrides)
-
-    BtnResetAllOverrides := AddColoredButton(MainGui, "x424 y" (resetSectionY + 20) " w190 h26", "Reset All Overrides", BtnColorResetOverrides)
-    BtnResetAllOverrides.OnEvent("Click", ResetAllOverridesEverything)
-
-    BtnResetWinMixer := AddColoredButton(MainGui, "x622 y" (resetSectionY + 20) " w198 h26", "Reset Win Mixer", BtnColorResetWinMixer)
-    BtnResetWinMixer.OnEvent("Click", ResetWindowsVolumeMixer)
-
-    MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    BtnApplyChanges := AddColoredButton(MainGui, "x844 y" (resetSectionY + 10) " w138 h44", "Apply", BtnColorApply)
-    BtnApplyChanges.OnEvent("Click", OnApplyAllChangesClick)
-
-    MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    BtnCloseGui := AddColoredButton(MainGui, "x994 y" (resetSectionY + 10) " w138 h44", "Close", BtnColorClose)
-    BtnCloseGui.OnEvent("Click", OnGuiCloseRequest)
-
     ; --- Bottom Status Bar: Override Status Messages ---
     MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
-    MainGui.AddGroupBox("x16 y" statusBarY " w1116 h40", "")
+    MainGui.AddGroupBox("x16 y" statusBarY " w880 h40", "")
 
     MainGui.SetFont("s9 Bold c" Th("ok"), "Segoe UI")
-    LblStatusBar := MainGui.AddText("x28 y" (statusBarY + 14) " w700", "Status : Automatic (Using Global Screen Rules)")
+    LblStatusBar := MainGui.AddText("x28 y" (statusBarY + 14) " w584", "Status : Automatic (Using Global Screen Rules)")
 
     MainGui.SetFont("s8 Bold c" Th("text2"), "Segoe UI")
-    LblConflictBar := MainGui.AddText("x734 y" (statusBarY + 15) " w386 Right", "Active Overrides : 0")
+    LblConflictBar := MainGui.AddText("x616 y" (statusBarY + 15) " w268 Right", "Active Overrides : 0")
+
+    ; Apply (grey while there is nothing to apply) and Close, at the right end of the status row,
+    ; as high as the status frame's visible box (its top line is drawn 7 px below its y)
+    MainGui.SetFont("s9 Bold c" Th("text"), "Segoe UI")
+    BtnApplyChanges := AddColoredButton(MainGui, "x904 y" (statusBarY + 7) " w110 h33 Disabled", "Apply", BtnColorApply)
+    BtnApplyChanges.OnEvent("Click", OnApplyAllChangesClick)
+    AddTip(BtnApplyChanges, "Apply recorded hotkeys and the Fallback / Notify values.`nEverything else applies as soon as you change it.")
+    BtnCloseGui := AddColoredButton(MainGui, "x1022 y" (statusBarY + 7) " w110 h33", "Close", BtnColorClose)
+    BtnCloseGui.OnEvent("Click", OnGuiCloseRequest)
 
     if !FileExist(SVV) && !(NativeAudio && IsObject(AudioPolicyFactory())) {
         LblStatusBar.Opt("c" Th("err"))
@@ -557,27 +595,29 @@ ApplyChangesFromGui(silent := false) {
 
     allOk := true
 
-    if GetHotkeyBoxPending(HkCtrlFocused) != HkOverrideFocused
-        allOk &= RegisterSingleHotkey("focused", GetHotkeyBoxPending(HkCtrlFocused), true)
-    if GetHotkeyBoxPending(HkCtrlAllMons) != HkOverrideAllMons
-        allOk &= RegisterSingleHotkey("allmons", GetHotkeyBoxPending(HkCtrlAllMons), true)
-    if GetHotkeyBoxPending(HkCtrlAll) != HkOverrideAll
-        allOk &= RegisterSingleHotkey("all", GetHotkeyBoxPending(HkCtrlAll), true)
-    if GetHotkeyBoxPending(HkCtrlReapply) != HkReapply
-        allOk &= RegisterSingleHotkey("reapply", GetHotkeyBoxPending(HkCtrlReapply), true)
+    ; A shortcut that another program uses is only applied after "Use it anyway?" (a No puts
+    ; the box back to the saved shortcut, which doesn't count as a failure).
+    for item in [["focused", HkCtrlFocused, HkOverrideFocused], ["allmons", HkCtrlAllMons, HkOverrideAllMons]
+               , ["all", HkCtrlAll, HkOverrideAll], ["reapply", HkCtrlReapply, HkReapply]] {
+        pend := GetHotkeyBoxPending(item[2])
+        if pend != item[3] && ConfirmHotkeyUse(pend, item[1], item[3], item[2])
+            allOk &= RegisterSingleHotkey(item[1], pend, true)
+    }
 
     Loop DetectedMonCount {
         mIdx := A_Index
         if MonHkControls.Has(mIdx) && !IsMonitorDisabled(mIdx) {
             pend := GetHotkeyBoxPending(MonHkControls[mIdx])
-            if pend != MonHotkeys.Get(mIdx, "")
+            saved := MonHotkeys.Get(mIdx, "")
+            if pend != saved && ConfirmHotkeyUse(pend, "mon:" mIdx, saved, MonHkControls[mIdx])
                 allOk &= RegisterMonitorHotkey(mIdx, pend, true)
         }
     }
 
     if SelectedApp != "" && Apps.Has(SelectedApp) && IsObject(HkCtrlApp) {
         pendApp := GetHotkeyBoxPending(HkCtrlApp)
-        if pendApp != AppHotkeys.Get(SelectedApp, "")
+        saved := AppHotkeys.Get(SelectedApp, "")
+        if pendApp != saved && ConfirmHotkeyUse(pendApp, "app:" StrLower(SelectedApp), saved, HkCtrlApp)
             allOk &= RegisterAppHotkey(SelectedApp, pendApp, true)
     }
 
@@ -608,7 +648,16 @@ ApplyChangesFromGui(silent := false) {
         else
             Tip("Some shortcuts could not be applied (conflict or reserved)")
     }
+    UpdateApplyButton()
     return allOk
+}
+
+; Apply is clickable only while something is waiting to be applied.
+UpdateApplyButton() {
+    try {
+        if IsObject(BtnApplyChanges)
+            SetCtrlEnabled(BtnApplyChanges, HasUnappliedGuiChanges())
+    }
 }
 
 RevertUnappliedGuiChanges() {
@@ -630,6 +679,7 @@ RevertUnappliedGuiChanges() {
         EdtPollMs.Value := EventsActive ? FallbackPollMs : PollMs
     if IsObject(EdtToastSec)
         EdtToastSec.Value := ToastSec
+    UpdateApplyButton()
 }
 
 OnApplyAllChangesClick(*) {
@@ -676,6 +726,7 @@ ShowDetectWindow(*) {
     DetectWindow := Gui("-MaximizeBox" (ownerOpt != "" ? ownerOpt : " +AlwaysOnTop"), "Detected Running Apps")
     DetectWindow.SetFont("s9 c" Th("text"), "Segoe UI")
     DetectWindow.BackColor := Th("bg")
+    DetectWindow.AddButton("x0 y0 w0 h0")          ; invisible first control: takes the focus when the window opens
 
     DetectWindow.AddText("x16 y12 w42", "Filter :")
     EdtFilter := DetectWindow.AddEdit("x60 y9 w172 h23", "")
@@ -831,6 +882,8 @@ ShowMainGui(*) {
     }
     RefreshAutoStartUi()
     RevertUnappliedGuiChanges()
+    ClearAppSelection()                            ; the window always opens with no app selected
+    SetTimer(RecheckHotkeyBoxes.Bind(true), -80)   ; another app may have taken a shortcut since last time
     if DllCall("IsWindowVisible", "Ptr", MainGui.Hwnd)
         MainGui.Show("w1148")
     else
@@ -1192,55 +1245,174 @@ PopulateMonitorDropdowns() {
         mIdx := A_Index
         isConn := (mIdx <= DetectedMonCount)
         normId := MonitorRules.Get(mIdx, DEFAULT_DEVICE)
-        isSubEnabled := isConn && (normId != DISABLED_MONITOR)
+        isSubEnabled := isConn && !IsMonitorDisabled(mIdx)
+
+        if MonEnableChecks.Has(mIdx) {
+            SetCtrlValue(MonEnableChecks[mIdx], IsMonitorDisabled(mIdx) ? 0 : 1)
+            SetCtrlEnabled(MonEnableChecks[mIdx], isConn)
+        }
 
         if MonDropdowns.Has(mIdx) {
             ddl := MonDropdowns[mIdx]
-            res := BuildDeviceDropdownItems(normId, "", "", true, "o")
+            res := BuildDeviceDropdownItems(normId, "", "", false, "o")
             MonDropdownIds[mIdx] := res.ids
-            ddl.Delete()
-            ddl.Add(res.labels)
-            ddl.Choose(res.chosenIdx)
-            ddl.Enabled := isConn
+            SetDdlItems(ddl, res.labels, res.chosenIdx)
+            SetCtrlEnabled(ddl, isSubEnabled)
         }
 
         if MonOvrLabels.Has(mIdx)
-            MonOvrLabels[mIdx].Opt(isSubEnabled ? "c" Th("text") : "c" Th("muted"))
+            SetCtrlColor(MonOvrLabels[mIdx], isSubEnabled ? Th("text") : Th("muted"))
 
         if MonOvrDropdowns.Has(mIdx) {
             ovrDdl := MonOvrDropdowns[mIdx]
             ovrTargetId := MonitorOverrideRules.Get(mIdx, DEFAULT_DEVICE)
-            excludeId := (AvoidConflicts && normId != DEFAULT_DEVICE && normId != DISABLED_MONITOR) ? normId : ""
-            sameWarn := (normId != DISABLED_MONITOR) ? normId : ""
+            excludeId := (AvoidConflicts && normId != DEFAULT_DEVICE) ? normId : ""
+            sameWarn := normId
             ovrRes := BuildDeviceDropdownItems(ovrTargetId, excludeId, sameWarn, false, "m")
             MonOvrDropdownIds[mIdx] := ovrRes.ids
-            ovrDdl.Delete()
-            ovrDdl.Add(ovrRes.labels)
-            ovrDdl.Choose(ovrRes.chosenIdx)
-            ovrDdl.Enabled := isSubEnabled
+            SetDdlItems(ovrDdl, ovrRes.labels, ovrRes.chosenIdx)
+            SetCtrlEnabled(ovrDdl, isSubEnabled)
         }
 
         if MonOvrButtons.Has(mIdx) {
             isOvrOn := isSubEnabled && MonitorOverrideActive.Get(mIdx, false)
-            MonOvrButtons[mIdx].Text := isOvrOn ? "Ovr : ON" : "Ovr : OFF"
-            MonOvrButtons[mIdx].Enabled := isSubEnabled
+            SetCtrlText(MonOvrButtons[mIdx], isOvrOn ? "Ovrd : ON" : "Ovrd : OFF")
+            SetCtrlEnabled(MonOvrButtons[mIdx], isSubEnabled)
             SetButtonColor(MonOvrButtons[mIdx], isOvrOn ? BtnColorMonOvrOn : BtnColorMonOvrOff)
         }
 
         if MonHkLabels.Has(mIdx)
-            MonHkLabels[mIdx].Opt(isSubEnabled ? "c" Th("text2") : "c" Th("muted"))
+            SetCtrlColor(MonHkLabels[mIdx], isSubEnabled ? Th("text2") : Th("muted"))
 
         if MonHkControls.Has(mIdx) {
-            MonHkControls[mIdx].Enabled := isSubEnabled
+            SetCtrlEnabled(MonHkControls[mIdx], isSubEnabled)
             SetHotkeyBoxValue(MonHkControls[mIdx], isConn ? MonHotkeys.Get(mIdx, "") : "", "normal")
         }
         if MonHkSetButtons.Has(mIdx)
-            MonHkSetButtons[mIdx].Enabled := isSubEnabled
+            SetCtrlEnabled(MonHkSetButtons[mIdx], isSubEnabled)
         if MonHkClrButtons.Has(mIdx)
-            MonHkClrButtons[mIdx].Enabled := isSubEnabled
+            SetCtrlEnabled(MonHkClrButtons[mIdx], isSubEnabled)
         if MonHkRstButtons.Has(mIdx)
-            MonHkRstButtons[mIdx].Enabled := isSubEnabled
+            SetCtrlEnabled(MonHkRstButtons[mIdx], isSubEnabled)
+
+        if MonMicChecks.Has(mIdx) {
+            SetCtrlValue(MonMicChecks[mIdx], MonMicOn.Has(mIdx) ? 1 : 0)
+            SetCtrlEnabled(MonMicChecks[mIdx], isSubEnabled)
+        }
+        if MonMicDropdowns.Has(mIdx) {
+            res := BuildMicDropdownItems(MonitorOverrideRules.Get(mIdx, DEFAULT_DEVICE), MonMicDevice.Get(mIdx, ""))
+            MonMicDropdownIds[mIdx] := res.ids
+            SetDdlItems(MonMicDropdowns[mIdx], res.labels, res.chosenIdx)
+            SetCtrlEnabled(MonMicDropdowns[mIdx], isSubEnabled && MonMicOn.Has(mIdx))
+        }
     }
+}
+
+; Microphone list: "Paired : <microphone paired with pairDev>" (id ""), the Windows default,
+; then every microphone. A chosen microphone that is not connected stays selectable.
+BuildMicDropdownItems(pairDev, chosenId) {
+    paired := PairedMicOf(pairDev)
+    labels := ["Paired : " MicDisplayName(paired) (DevicePresent(paired) ? "" : "  (not connected)")]
+    ids := [""]
+    labels.Push("Windows default microphone"), ids.Push(DEFAULT_CAPTURE_DEVICE)
+    for m in CachedMics {
+        labels.Push(m.label)
+        ids.Push(m.id)
+    }
+    chosen := 1
+    if chosenId != "" {
+        for i, id in ids {
+            if i > 1 && (id = chosenId || (id != DEFAULT_CAPTURE_DEVICE && DevKey(id) = DevKey(chosenId))) {
+                chosen := i
+                break
+            }
+        }
+        if chosen = 1 {
+            labels.Push("[Disconnected] " DeviceWinName(chosenId))
+            ids.Push(chosenId)
+            chosen := ids.Length
+        }
+    }
+    return {labels: labels, ids: ids, chosenIdx: chosen}
+}
+
+OnMonMicOnChanged(mIdx, ctrl, *) {
+    if ctrl.Value
+        MonMicOn[mIdx] := true
+    else
+        MapDel(MonMicOn, mIdx)
+    SaveConfig()
+    PopulateMonitorDropdowns()
+    if MonitorOverrideActive.Get(mIdx, false)
+        ReapplyAll(false, true)
+    PopulateAppList(true)
+    Tip("Monitor " mIdx " : " (ctrl.Value ? "its override also switches the microphone" : "its override changes only the sound"))
+}
+
+OnMonMicDeviceChanged(mIdx, ctrl, *) {
+    idx := ctrl.Value
+    ids := MonMicDropdownIds.Get(mIdx, [])
+    if idx < 1 || idx > ids.Length
+        return
+    if ids[idx] = ""
+        MapDel(MonMicDevice, mIdx)
+    else
+        MonMicDevice[mIdx] := ids[idx]
+    SaveConfig()
+    if MonitorOverrideActive.Get(mIdx, false) && MonMicOn.Has(mIdx)
+        ReapplyAll(false, true)
+    PopulateAppList(true)
+}
+
+; The Per-App microphone controls for the selected app.
+RefreshAppMicControls() {
+    global AppMicDdlIds
+    if !IsObject(DdlAppMic)
+        return
+    app := SelectedApp
+    if app = "" || !Apps.Has(app) {
+        SetCtrlValue(ChkAppMicOn, 0)
+        SetCtrlEnabled(ChkAppMicOn, false)
+        res := BuildMicDropdownItems(DEFAULT_DEVICE, "")
+    } else {
+        SetCtrlEnabled(ChkAppMicOn, true)
+        SetCtrlValue(ChkAppMicOn, AppMicOn.Has(app) ? 1 : 0)
+        res := BuildMicDropdownItems(AppOverrideRules.Get(app, DEFAULT_DEVICE), AppMicDevice.Get(app, ""))
+    }
+    AppMicDdlIds := res.ids
+    SetDdlItems(DdlAppMic, res.labels, res.chosenIdx)
+    SetCtrlEnabled(DdlAppMic, app != "" && Apps.Has(app) && AppMicOn.Has(app))
+}
+
+OnAppMicOnChanged(*) {
+    app := SelectedApp
+    if app = "" || !Apps.Has(app)
+        return
+    if ChkAppMicOn.Value
+        AppMicOn[app] := true
+    else
+        MapDel(AppMicOn, app)
+    SaveConfig()
+    RefreshAppMicControls()
+    MapDel(LastRouted, app)
+    RouteAppNow(app, true)
+    PopulateAppList(true)
+    Tip(app " : " (ChkAppMicOn.Value ? "its override also switches the microphone" : "its override changes only the sound"))
+}
+
+OnAppMicDeviceChanged(*) {
+    app := SelectedApp
+    idx := DdlAppMic.Value
+    if app = "" || !Apps.Has(app) || idx < 1 || idx > AppMicDdlIds.Length
+        return
+    if AppMicDdlIds[idx] = ""
+        MapDel(AppMicDevice, app)
+    else
+        AppMicDevice[app] := AppMicDdlIds[idx]
+    SaveConfig()
+    MapDel(LastRouted, app)
+    RouteAppNow(app, true)
+    PopulateAppList(true)
 }
 
 PopulateOverrideDeviceDropdowns() {
@@ -1250,15 +1422,11 @@ PopulateOverrideDeviceDropdowns() {
 
     allRes := BuildDeviceDropdownItems(AllDevice, "", "", false, "a")
     AllAppsDeviceIds := allRes.ids
-    DdlAllAppsDevice.Delete()
-    DdlAllAppsDevice.Add(allRes.labels)
-    DdlAllAppsDevice.Choose(allRes.chosenIdx)
+    SetDdlItems(DdlAllAppsDevice, allRes.labels, allRes.chosenIdx)
 
     monsRes := BuildDeviceDropdownItems(AllMonitorsDevice, "", "", false, "m")
     AllMonsDeviceIds := monsRes.ids
-    DdlAllMonsDevice.Delete()
-    DdlAllMonsDevice.Add(monsRes.labels)
-    DdlAllMonsDevice.Choose(monsRes.chosenIdx)
+    SetDdlItems(DdlAllMonsDevice, monsRes.labels, monsRes.chosenIdx)
 }
 
 RefreshSelectedAppPanel() {
@@ -1267,67 +1435,99 @@ RefreshSelectedAppPanel() {
         return
 
     if SelectedApp = "" || !Apps.Has(SelectedApp) {
-        LblSelAppName.Value := "(None selected)"
-        DdlAppOverrideDevice.Enabled := false
-        DdlAppOverrideDevice.Delete()
-        DdlAppOverrideDevice.Add(["Windows Default Device"])
-        DdlAppOverrideDevice.Choose(1)
-        BtnToggleAppOvr.Enabled := false
-        BtnToggleAppOvr.Text := "Override : OFF"
+        SetCtrlValue(LblSelAppName, "(None selected)")
+        SetCtrlEnabled(DdlAppOverrideDevice, false)
+        SetDdlItems(DdlAppOverrideDevice, ["Windows Default Device"], 1)
+        SetCtrlEnabled(BtnToggleAppOvr, false)
+        SetCtrlText(BtnToggleAppOvr, "Override : OFF")
         SetButtonColor(BtnToggleAppOvr, BtnColorAppOvrOff)
-        BtnResetAppOvr.Enabled := false
-        HkCtrlApp.Enabled := false
+        SetCtrlEnabled(BtnResetAppOvr, false)
+        SetCtrlEnabled(HkCtrlApp, false)
         SetHotkeyBoxValue(HkCtrlApp, "", "normal")
-        BtnSetAppHk.Enabled := false
-        BtnClrAppHk.Enabled := false
-        BtnRstAppHk.Enabled := false
-        ChkAppFollowFocus.Value := -1
-        ChkAppFollowFocus.Enabled := false
-        ChkAppFollowMon.Value := 1
-        ChkAppFollowMon.Enabled := false
-        DdlAppFixedDevice.Delete()
-        DdlAppFixedDevice.Add(["Windows Default Device"])
-        DdlAppFixedDevice.Choose(1)
-        DdlAppFixedDevice.Enabled := false
+        SetCtrlEnabled(BtnSetAppHk, false)
+        SetCtrlEnabled(BtnClrAppHk, false)
+        SetCtrlEnabled(BtnRstAppHk, false)
+        SetDdlItems(DdlAppFollowFocus, AppFollowFocusLabels(), 1)
+        SetCtrlEnabled(DdlAppFollowFocus, false)
+        SetCtrlValue(ChkAppFollowMon, 1)
+        SetCtrlEnabled(ChkAppFollowMon, false)
+        SetDdlItems(DdlAppFixedDevice, ["Windows Default Device"], 1)
+        SetCtrlEnabled(DdlAppFixedDevice, false)
+        SetCtrlValue(ChkAppSystemMic, 0)
+        SetCtrlEnabled(ChkAppSystemMic, false)
+        SetCtrlValue(ChkAppHideTray, 0)
+        SetCtrlEnabled(ChkAppHideTray, false)
+        RefreshAppMicControls()
         return
     }
 
     app := SelectedApp
-    LblSelAppName.Value := app
-    DdlAppOverrideDevice.Enabled := true
-    BtnToggleAppOvr.Enabled := Apps.Get(app, false)
-    BtnResetAppOvr.Enabled := true
-    HkCtrlApp.Enabled := true
-    BtnSetAppHk.Enabled := true
-    BtnClrAppHk.Enabled := true
-    BtnRstAppHk.Enabled := true
-    ChkAppFollowFocus.Enabled := true
-    ChkAppFollowFocus.Value := AppFollowFocus.Has(app) ? AppFollowFocus[app] : -1
+    SetCtrlValue(LblSelAppName, app)
+    SetCtrlEnabled(DdlAppOverrideDevice, true)
+    SetCtrlEnabled(BtnToggleAppOvr, Apps.Get(app, false))
+    SetCtrlEnabled(BtnResetAppOvr, true)
+    SetCtrlEnabled(HkCtrlApp, true)
+    SetCtrlEnabled(BtnSetAppHk, true)
+    SetCtrlEnabled(BtnClrAppHk, true)
+    SetCtrlEnabled(BtnRstAppHk, true)
+    SetCtrlEnabled(DdlAppFollowFocus, true)
+    SetDdlItems(DdlAppFollowFocus, AppFollowFocusLabels(), !AppFollowFocus.Has(app) ? 1 : AppFollowFocus[app] ? 2 : 3)
 
     targetId := AppOverrideRules.Get(app, DEFAULT_DEVICE)
     res := BuildDeviceDropdownItems(targetId, "", "", false, "a")
     AppOverrideDeviceIds := res.ids
-    DdlAppOverrideDevice.Delete()
-    DdlAppOverrideDevice.Add(res.labels)
-    DdlAppOverrideDevice.Choose(res.chosenIdx)
+    SetDdlItems(DdlAppOverrideDevice, res.labels, res.chosenIdx)
 
     isOvrOn := AppOverrideActive.Get(app, false)
-    BtnToggleAppOvr.Text := isOvrOn ? "Override : ON" : "Override : OFF"
+    SetCtrlText(BtnToggleAppOvr, isOvrOn ? "Override : ON" : "Override : OFF")
     SetButtonColor(BtnToggleAppOvr, isOvrOn ? BtnColorAppOvrOn : BtnColorAppOvrOff)
 
     hk := AppHotkeys.Get(app, "")
     SetHotkeyBoxValue(HkCtrlApp, hk, "normal")
 
     fixed := AppFixedDevice.Has(app)
-    ChkAppFollowMon.Enabled := true
-    ChkAppFollowMon.Value := fixed ? 0 : 1
+    SetCtrlEnabled(ChkAppFollowMon, true)
+    SetCtrlValue(ChkAppFollowMon, fixed ? 0 : 1)
     fRes := BuildDeviceDropdownItems(AppFixedDevice.Get(app, DEFAULT_DEVICE), "", "", false, "o")
     AppFixedDeviceIds := fRes.ids
-    DdlAppFixedDevice.Delete()
-    DdlAppFixedDevice.Add(fRes.labels)
-    DdlAppFixedDevice.Choose(fRes.chosenIdx)
-    DdlAppFixedDevice.Enabled := fixed
+    SetDdlItems(DdlAppFixedDevice, fRes.labels, fRes.chosenIdx)
+    SetCtrlEnabled(DdlAppFixedDevice, fixed)
+    SetCtrlEnabled(ChkAppSystemMic, true)
+    SetCtrlValue(ChkAppSystemMic, AppSystemMic.Get(app, false) ? 1 : 0)
+    SetCtrlEnabled(ChkAppHideTray, true)
+    SetCtrlValue(ChkAppHideTray, AppHideTrayIcon.Has(app) ? 1 : 0)
+    RefreshAppMicControls()
     UpdateQuickActionButtons()
+}
+
+OnAppHideTrayChanged(*) {
+    app := SelectedApp
+    if app = "" || !Apps.Has(app)
+        return
+    if ChkAppHideTray.Value
+        AppHideTrayIcon[app] := true
+    else
+        MapDel(AppHideTrayIcon, app)
+    SaveConfig()
+    UpdateTrayIndicators()
+    Tip(app " : " (ChkAppHideTray.Value ? "no tray icon while its override is on" : "tray icon while its override is on"))
+}
+
+OnAppSystemMicChanged(*) {
+    app := SelectedApp
+    if app = "" || !Apps.Has(app)
+        return
+    if ChkAppSystemMic.Value {
+        AppSystemMic[app] := true
+        Tip(app " : its microphone also becomes the Windows default"
+            . (MicRoutingActive() ? "" : "`n(pair microphones with devices in the Devices window, or use Override Mic)"))
+    } else {
+        MapDel(AppSystemMic, app)
+        Tip(app " : Windows default microphone left alone")
+    }
+    SaveConfig()
+    MapDel(LastRouted, app)
+    RouteAppNow(app, true)
 }
 
 ; "Follow monitor" unticked: the app keeps the device it plays on now (its monitor's
@@ -1424,22 +1624,10 @@ OnGlobalRuleChanged(mIdx, ctrl, *) {
         return
 
     chosenId := ids[idx]
-    if chosenId = DISABLED_MONITOR {
-        MonitorRules[mIdx] := DISABLED_MONITOR
-        MonitorOverrideActive[mIdx] := false
-        if RegMonHotkeys.Has(mIdx) {
-            try Hotkey(RegMonHotkeys[mIdx], "Off")
-            MapDel(RegMonHotkeys, mIdx)
-        }
-    } else {
-        if chosenId = DEFAULT_DEVICE
-            MapDel(MonitorRules, mIdx)
-        else
-            MonitorRules[mIdx] := chosenId
-
-        if !RegMonHotkeys.Has(mIdx) && MonHotkeys.Has(mIdx) && MonHotkeys[mIdx] != ""
-            RegisterMonitorHotkey(mIdx, MonHotkeys[mIdx], true)
-    }
+    if chosenId = DEFAULT_DEVICE
+        MapDel(MonitorRules, mIdx)
+    else
+        MonitorRules[mIdx] := chosenId
 
     if AvoidConflicts
         SanitizeConfigConflicts(false)
@@ -1450,6 +1638,32 @@ OnGlobalRuleChanged(mIdx, ctrl, *) {
     SetupTrayMenu()
     ReapplyAll(false, false)
     UpdateOverrideBanner()
+}
+
+; "Enabled" ticked / unticked. Off: the monitor's override ends and its hotkey is switched off;
+; its Output, Ovrd and Mic settings stay for when it is ticked again.
+OnMonitorEnabledChanged(mIdx, ctrl, *) {
+    if mIdx > DetectedMonCount
+        return
+    if ctrl.Value {
+        MapDel(MonitorOff, mIdx)
+        if !RegMonHotkeys.Has(mIdx) && MonHotkeys.Get(mIdx, "") != ""
+            RegisterMonitorHotkey(mIdx, MonHotkeys[mIdx], true)
+    } else {
+        MonitorOff[mIdx] := true
+        MonitorOverrideActive[mIdx] := false
+        if RegMonHotkeys.Has(mIdx) {
+            try Hotkey(RegMonHotkeys[mIdx], "Off")
+            MapDel(RegMonHotkeys, mIdx)
+        }
+    }
+    SaveConfig()
+    SaveState()
+    PopulateMonitorDropdowns()
+    SetupTrayMenu()
+    ReapplyAll(false, true)
+    UpdateOverrideBanner()
+    Tip("Monitor " mIdx " : " (ctrl.Value ? "enabled" : "disabled (Windows default device)"))
 }
 
 OnMonitorOverrideDeviceChanged(mIdx, ctrl, *) {
@@ -1491,6 +1705,7 @@ OnSelectedAppOverrideDeviceChanged(ctrl, *) {
         MapDel(AppOverrideRules, SelectedApp)
     else
         AppOverrideRules[SelectedApp] := chosenId
+    RefreshAppMicControls()                       ; "Paired :" follows the override device
 
     if AvoidConflicts
         SanitizeConfigConflicts(false)
@@ -1517,10 +1732,14 @@ OnResetSelectedAppOverride(*) {
     if SelectedApp = "" || !Apps.Has(SelectedApp)
         return
     app := SelectedApp
-    hadOvr := AppOverrideActive.Get(app, false) || AppOverrideRules.Has(app)
+    hadOvr := AppOverrideActive.Get(app, false) || AppOverrideRules.Has(app) || AppMicOn.Has(app) || AppMicDevice.Has(app)
 
+    ; this app's override back to its defaults: off, Override Output = Windows Default, Override Mic off
     MapDel(AppOverrideActive, app)
     MapDel(AppOverrideRules, app)
+    MapDel(AppTempOverride, app)
+    MapDel(AppMicOn, app)
+    MapDel(AppMicDevice, app)
     if AllMode
         MapDel(Released, app)
 
@@ -1609,24 +1828,29 @@ OnRoutingDisableOptionChanged(*) {
     }
 }
 
+; An override being on is a normal state, not a warning: its own color (statusOvr), or the text color.
+StatusOvrColor() {
+    return Th("statusOvr") != "" ? Th("statusOvr") : Th("text")
+}
+
 UpdateRoutingModeLabel() {
     if !IsObject(LblRoutingModeNote)
         return
     if DisableAllRouting {
-        LblRoutingModeNote.Opt("c" Th("err"))
-        LblRoutingModeNote.Value := "⏸ Routing is DEACTIVATED (Click Routing : OFF or Tray/Title Menu to activate)"
+        SetCtrlColor(LblRoutingModeNote, Th("err"))
+        SetCtrlValue(LblRoutingModeNote, "⏸ Routing is DEACTIVATED (Click Routing : OFF or Tray/Title Menu to activate)")
     } else if DisableMonitorRouting && DisableAppRouting {
-        LblRoutingModeNote.Opt("c" Th("err"))
-        LblRoutingModeNote.Value := "⏸ Both Monitor & App Routing are DISABLED"
+        SetCtrlColor(LblRoutingModeNote, Th("err"))
+        SetCtrlValue(LblRoutingModeNote, "⏸ Both Monitor & App Routing are DISABLED")
     } else if DisableMonitorRouting {
-        LblRoutingModeNote.Opt("c" Th("warn"))
-        LblRoutingModeNote.Value := "⚠ Monitor Routing DISABLED — Only Per-App / All-Apps Overrides active"
+        SetCtrlColor(LblRoutingModeNote, Th("warn"))
+        SetCtrlValue(LblRoutingModeNote, "⚠ Monitor Routing DISABLED — Only Per-App / All-Apps Overrides active")
     } else if DisableAppRouting {
-        LblRoutingModeNote.Opt("c" Th("warn"))
-        LblRoutingModeNote.Value := "⚠ App Routing DISABLED — Only Screen Outputs & Monitor Overrides active"
+        SetCtrlColor(LblRoutingModeNote, Th("warn"))
+        SetCtrlValue(LblRoutingModeNote, "⚠ App Routing DISABLED — Only Screen Outputs & Monitor Overrides active")
     } else {
-        LblRoutingModeNote.Opt("c" Th("ok"))
-        LblRoutingModeNote.Value := "● Active : Screen Outputs + Monitor Overrides + Per-App Routing enabled"
+        SetCtrlColor(LblRoutingModeNote, Th("ok"))
+        SetCtrlValue(LblRoutingModeNote, "● Active : Screen Outputs + Monitor Overrides + Per-App Routing enabled")
     }
 }
 
@@ -1644,7 +1868,7 @@ OnToggleAvoidConflicts(*) {
 }
 
 PopulateAppList(force := false) {
-    global SelectedApp, LastTrackedSnapshot, IsPopulatingTracked
+    global SelectedApp, LastTrackedSnapshot, IsPopulatingTracked, LastTrackedRows
     if !IsObject(AppLV)
         return false
 
@@ -1658,77 +1882,151 @@ PopulateAppList(force := false) {
         mon := running ? LastSeen.Get(app, 0) : 0
         monStr := mon ? String(mon) : "-"
 
+        ; Status: why the app plays where it does (the first rule that applies, as in GetRoutingTarget)
+        appLevel := false
         if DisableAllRouting {
-            devLabel := "⏸ Routing Deactivated"
+            status := "⏸ Routing off"
         } else if !enabled {
-            devLabel := "⏸ Disabled (Unchecked)"
+            status := "⏸ Disabled"
         } else if !DisableAppRouting && AppOverrideActive.Get(app, false) {
-            devLabel := (AppTempOverride.Has(app) ? "⏱ [Temp Override] " : "⭐ [App Override] ") DevStatusName(AppOverrideDevice(app))
+            status := AppTempOverride.Has(app) ? "⏱ Temp override" : "⭐ App override", appLevel := true
         } else if !DisableAppRouting && AllMode && !Released.Has(app) {
-            devLabel := "🔥 [All-Apps Ovr] " DevStatusName(AllDevice)
+            status := "🔥 All-Apps", appLevel := true
         } else if !DisableAppRouting && AppFixedDevice.Has(app) {
-            devLabel := "📌 " DevStatusName(AppFixedDevice[app]) "  (fixed)"
+            status := "📌 Fixed", appLevel := true
         } else if !running {
-            devLabel := "💤 Not running"
+            status := "💤 Not running"
         } else if mon && mon <= DetectedMonCount && IsMonitorDisabled(mon) {
-            devLabel := "⏸ Mon " mon " Disabled (Windows Default)"
+            status := "⏸ Mon disabled"
         } else if !DisableMonitorRouting && mon && AllMonitorsMode {
-            devLabel := "🌐 [All-Mons Ovr] " DevStatusName(AllMonitorsDevice)
+            status := "🌐 All-Mons"
         } else if !DisableMonitorRouting && mon && mon <= DetectedMonCount && MonitorOverrideActive.Get(mon, false) {
-            devLabel := "⚡ [Mon " mon " Ovr] " DevStatusName(MonitorOverrideRules.Get(mon, DEFAULT_DEVICE))
+            status := "⚡ Mon override"
         } else if !DisableMonitorRouting && mon && mon <= DetectedMonCount && MonitorRules.Has(mon) {
-            devLabel := "🟢 " DevStatusName(MonitorRules[mon])
+            status := "🟢 Monitor"
         } else {
-            devLabel := "⚪ Windows Default"
+            status := "⚪ Default"
         }
 
-        if running && enabled && !DisableAllRouting {
+        ; Output / Input: what it actually gets (a missing device shows its fallback)
+        outTxt := "–", inTxt := "–", tipOut := "", tipIn := ""
+        if enabled && !DisableAllRouting && (running || appLevel) {
             tgt := GetRoutingTarget(app, mon)
+            outTxt := ShortDeviceName(tgt.dev), tipOut := outTxt
             if tgt.missing != ""
-                devLabel := Chr(0x21AA) " " ShortDeviceName(tgt.dev) "   (" TrayDevName(tgt.missing) " not connected)"
+                outTxt := "⚠ " outTxt, tipOut .= "   (" ShortDeviceName(tgt.missing) " is not connected)"
+            if running && MicRoutingActive() {
+                micT := MicForApp(app, mon)
+                inTxt := MicDisplayName(micT.mic), tipIn := inTxt
+                if micT.missing != ""
+                    inTxt := "⚠ " inTxt, tipIn .= "   (" ShortDeviceName(micT.missing) " is not connected)"
+            }
+        }
+        ; tooltip: the reason in full words, with the monitor number
+        why := RegExReplace(status, "^\S+\s+")
+        switch why {
+            case "Monitor":      why := "Monitor " mon " output"
+            case "Mon override": why := "Monitor " mon " override"
+            case "Mon disabled": why := "Monitor " mon " is disabled"
+            case "All-Mons":     why := "All-Monitors override (on Monitor " mon ")"
+            case "Default":      why := mon ? "Windows default (Monitor " mon " has no output set)" : "Windows default"
+            default:
+                if appLevel && running && mon
+                    why .= " (on Monitor " mon ")"
+        }
+        rowTip := app "  —  " why
+            . (tipOut != "" ? "`nOutput : " tipOut : "") . (tipIn != "" ? "`nInput : " tipIn : "")
+        ; the monitor number goes into the monitor statuses ("Monitor 2", "Mon 2 override")
+        if mon {
+            switch status {
+                case "🟢 Monitor":      status := "🟢 Monitor " mon
+                case "⚡ Mon override": status := "⚡ Mon " mon " override"
+                case "⏸ Mon disabled": status := "⏸ Mon " mon " disabled"
+                case "🌐 All-Mons":     status := "🌐 All-Mons (" mon ")"
+            }
         }
 
-        rowsData.Push({app: app, enabled: enabled, mon: monStr, status: devLabel})
-        snapshot .= app "|" (enabled ? "1" : "0") "|" monStr "|" devLabel "`n"
+        ; app override on: the row gets the color of the Override : ON button
+        ovrOn := !DisableAllRouting && enabled && !DisableAppRouting && AppOverrideActive.Get(app, false)
+        ovrColor := ovrOn ? NormalizeHexColor(BtnColorAppOvrOn) : ""
+        rowsData.Push({app: app, enabled: enabled, mon: monStr, status: status, out: outTxt, inp: inTxt, rowTip: rowTip, color: ovrColor})
+        snapshot .= app "|" (enabled ? "1" : "0") "|" monStr "|" status "|" outTxt "|" inTxt "|" ovrColor "`n"
     }
 
     if !force && snapshot = LastTrackedSnapshot
         return false
     LastTrackedSnapshot := snapshot
 
+    ; Same apps in the same order (the usual case after a button): only the cells and row
+    ; colors that changed are updated, so the table does not flicker.
+    sameApps := AppLV.GetCount() = rowsData.Length && LastTrackedRows.Length = rowsData.Length
+    if sameApps {
+        for idx, item in rowsData {
+            if LastTrackedRows[idx].app != item.app {
+                sameApps := false
+                break
+            }
+        }
+    }
+    if sameApps {
+        IsPopulatingTracked := true
+        rowColors := Map(), rowTips := Map()
+        for idx, item in rowsData {
+            if item.color != ""
+                rowColors[idx - 1] := item.color
+            rowTips[idx - 1] := item.rowTip
+        }
+        LvRowColors[AppLV.Hwnd] := rowColors
+        ListRowTips[AppLV.Hwnd] := rowTips
+        for idx, item in rowsData {
+            old := LastTrackedRows[idx]
+            if old.enabled != item.enabled
+                AppLV.Modify(idx, item.enabled ? "Check" : "-Check")
+            if old.status != item.status || old.out != item.out || old.inp != item.inp
+                AppLV.Modify(idx, "", item.app, item.status, item.out, item.inp)
+            else if old.color != item.color
+                SendMessage(0x1015, idx - 1, idx - 1, AppLV)       ; LVM_REDRAWITEMS: just the new color
+        }
+        LastTrackedRows := rowsData
+        IsPopulatingTracked := false
+        SetCtrlEnabled(BtnRemoveApp, SelectedApp != "" && Apps.Has(SelectedApp))
+        UpdateQuickActionButtons()
+        return true
+    }
+
     IsPopulatingTracked := true
     prevSel := SelectedApp
-    prevStatusSel := StatusLV.GetNext(0) ? StatusLV.GetText(StatusLV.GetNext(0), 1) : ""
 
     AppLV.Opt("-Redraw")
     AppLV.Delete()
-    StatusLV.Opt("-Redraw")
-    StatusLV.Delete()
 
+    rowColors := Map(), rowTips := Map()
     selRow := 0
     for idx, item in rowsData {
-        AppLV.Add(item.enabled ? "Check" : "-Check", item.app, item.mon)
-        StatusLV.Add("", item.app, item.status)
-        if item.app = prevSel || item.app = prevStatusSel
+        if item.color != ""
+            rowColors[idx - 1] := item.color
+        rowTips[idx - 1] := item.rowTip
+        AppLV.Add(item.enabled ? "Check" : "-Check", item.app, item.status, item.out, item.inp)
+        if item.app = prevSel
             selRow := idx
     }
 
-    if !selRow && rowsData.Length > 0
-        selRow := 1
+    ; (no automatic selection: an app is selected only when you click it)
 
     if selRow {
         AppLV.Modify(selRow, "Select Focus Vis")
-        StatusLV.Modify(selRow, "Select Focus Vis")
         SelectedApp := rowsData[selRow].app
     } else {
         SelectedApp := ""
     }
 
+    LvRowColors[AppLV.Hwnd] := rowColors
+    ListRowTips[AppLV.Hwnd] := rowTips
+    LastTrackedRows := rowsData
     AppLV.Opt("+Redraw")
-    StatusLV.Opt("+Redraw")
     IsPopulatingTracked := false
 
-    BtnRemoveApp.Enabled := (SelectedApp != "" && Apps.Has(SelectedApp))
+    SetCtrlEnabled(BtnRemoveApp, SelectedApp != "" && Apps.Has(SelectedApp))
     UpdateQuickActionButtons()
     return true
 }
@@ -1745,6 +2043,7 @@ GetSortedApps() {
 RefreshTrackedStatusOnly() {
     if IsRebuildingGui
         return
+    UpdateApplyButton()
     if ActiveCaptureHwnd != 0 {
         try {
             if !IsObject(MainGui) || !WinActive("ahk_id " MainGui.Hwnd) || !IsObject(MainGui.FocusedCtrl) || MainGui.FocusedCtrl.Hwnd != ActiveCaptureHwnd
@@ -1763,46 +2062,47 @@ RefreshTrackedStatusOnly() {
     }
 }
 
-OnAppSelect(ctrl, item, selected) {
-    global SelectedApp
-    if IsPopulatingTracked || IsRebuildingGui || !item
+; No app selected: the table has no selected row and the selected-app rows are empty.
+ClearAppSelection() {
+    global SelectedApp, IsPopulatingTracked
+    if !IsObject(AppLV)
         return
-    SelectedApp := AppLV.GetText(item, 1)
-    StatusLV.Modify(item, "Select Focus Vis")
-    BtnRemoveApp.Enabled := (SelectedApp != "" && Apps.Has(SelectedApp))
+    IsPopulatingTracked := true                    ; no selection events while clearing
+    AppLV.Modify(0, "-Select -Focus")
+    IsPopulatingTracked := false
+    if SelectedApp = ""
+        return
+    SelectedApp := ""
+    SetCtrlEnabled(BtnRemoveApp, false)
     RefreshSelectedAppPanel()
     UpdateQuickActionButtons()
+}
+
+; A click fires "deselect old row", "select new row" and "click": only a newly selected,
+; different app updates the panel, once.
+OnAppSelect(ctrl, item, selected) {
+    if IsPopulatingTracked || IsRebuildingGui || !item || !selected
+        return
+    app := AppLV.GetText(item, 1)
+    if app != SelectedApp
+        ShowSelectedApp(app)
 }
 
 OnAppClick(ctrl, row) {
-    global SelectedApp
     if IsRebuildingGui || !row
         return
-    SelectedApp := AppLV.GetText(row, 1)
-    StatusLV.Modify(row, "Select Focus Vis")
-    BtnRemoveApp.Enabled := (SelectedApp != "" && Apps.Has(SelectedApp))
-    RefreshSelectedAppPanel()
-    UpdateQuickActionButtons()
+    app := AppLV.GetText(row, 1)
+    if app != SelectedApp
+        ShowSelectedApp(app)
 }
 
-OnStatusSelect(ctrl, item, selected) {
+; Fills the selected-app rows for another app. The refresh functions change only what
+; differs, so nothing else repaints (no window-wide freeze: the table must repaint its
+; old and new selected row right away).
+ShowSelectedApp(app) {
     global SelectedApp
-    if IsPopulatingTracked || IsRebuildingGui || !item
-        return
-    SelectedApp := StatusLV.GetText(item, 1)
-    AppLV.Modify(item, "Select Focus Vis")
-    BtnRemoveApp.Enabled := (SelectedApp != "" && Apps.Has(SelectedApp))
-    RefreshSelectedAppPanel()
-    UpdateQuickActionButtons()
-}
-
-OnStatusClick(ctrl, row) {
-    global SelectedApp
-    if IsRebuildingGui || !row
-        return
-    SelectedApp := StatusLV.GetText(row, 1)
-    AppLV.Modify(row, "Select Focus Vis")
-    BtnRemoveApp.Enabled := (SelectedApp != "" && Apps.Has(SelectedApp))
+    SelectedApp := app
+    SetCtrlEnabled(BtnRemoveApp, SelectedApp != "" && Apps.Has(SelectedApp))
     RefreshSelectedAppPanel()
     UpdateQuickActionButtons()
 }
@@ -1872,6 +2172,10 @@ RemoveAppByName(app) {
     MapDel(AppOverrideRules, app)
     MapDel(AppOverrideActive, app)
     MapDel(AppFixedDevice, app)
+    MapDel(AppSystemMic, app)
+    MapDel(AppMicOn, app)
+    MapDel(AppMicDevice, app)
+    MapDel(AppHideTrayIcon, app)
     MapDel(Released, app)
     MapDel(LastRouted, app)
     MapDel(LastSeen, app)
@@ -1927,6 +2231,11 @@ OnFollowFocusChanged(*) {
     ScanStamp := 0
     SaveSettings()
     ReapplyAll(false, false)
+    RefreshSelectedAppPanel()             ; the Per-App "Global (On/Off)" entry shows the new value
+}
+
+AppFollowFocusLabels() {
+    return ["Global  (" (FollowFocusGlobal ? "On" : "Off") ")", "On", "Off"]
 }
 
 OnAppFollowFocusChanged(*) {
@@ -1934,11 +2243,11 @@ OnAppFollowFocusChanged(*) {
     app := SelectedApp
     if app = "" || !Apps.Has(app)
         return
-    v := ChkAppFollowFocus.Value
-    if v = -1
+    idx := DdlAppFollowFocus.Value                ; 1 Global, 2 On, 3 Off
+    if idx <= 1
         MapDel(AppFollowFocus, app)
     else
-        AppFollowFocus[app] := v
+        AppFollowFocus[app] := (idx = 2) ? 1 : 0
     MapDel(AnchorHwnd, app)
     MapDel(AnchorPending, app)
     ScanStamp := 0
@@ -1996,11 +2305,11 @@ UpdateOverrideBanner() {
 
     if IsObject(LblStatusBar) {
         if DisableAllRouting {
-            LblStatusBar.Opt("c" Th("err"))
-            LblStatusBar.Value := "Status : ROUTING DEACTIVATED (Apps use Windows Default)"
+            SetCtrlColor(LblStatusBar, Th("err"))
+            SetCtrlValue(LblStatusBar, "Status : ROUTING DEACTIVATED (Apps use Windows Default)")
         } else if AllMode {
-            LblStatusBar.Opt("c" Th("err"))
-            LblStatusBar.Value := "Status : ALL-APPS OVERRIDE ON -> " ShortDeviceName(AllDevice)
+            SetCtrlColor(LblStatusBar, StatusOvrColor())
+            SetCtrlValue(LblStatusBar, "Status : ALL-APPS OVERRIDE ON -> " ShortDeviceName(AllDevice))
         } else if AllMonitorsMode || activeMons.Length > 0 || activeAppCount > 0 {
             parts := []
             if AllMonitorsMode
@@ -2009,39 +2318,39 @@ UpdateOverrideBanner() {
                 parts.Push(JoinStrings(activeMons, ", ") " Override ON")
             if activeAppCount > 0
                 parts.Push("App Override ON (" JoinStrings(activeAppNames, ", ") ")")
-            LblStatusBar.Opt("c" Th("warn"))
-            LblStatusBar.Value := "Status : " JoinStrings(parts, "  |  ")
+            SetCtrlColor(LblStatusBar, StatusOvrColor())
+            SetCtrlValue(LblStatusBar, "Status : " JoinStrings(parts, "  |  "))
         } else {
-            LblStatusBar.Opt("c" Th("ok"))
-            LblStatusBar.Value := "Status : Automatic (Using Global Screen Outputs)"
+            SetCtrlColor(LblStatusBar, Th("ok"))
+            SetCtrlValue(LblStatusBar, "Status : Automatic (Using Global Screen Outputs)")
         }
     }
 
     if IsObject(LblConflictBar) {
-        LblConflictBar.Value := Format("Active Overrides : {1}  (Monitors : {2}, Apps : {3})", totalActive, activeMons.Length + (AllMonitorsMode ? 1 : 0), activeAppCount)
+        SetCtrlValue(LblConflictBar, Format("Active Overrides : {1}  (Monitors : {2}, Apps : {3})", totalActive, activeMons.Length + (AllMonitorsMode ? 1 : 0), activeAppCount))
     }
 
     Loop MAX_MONITORS {
         isConn := (A_Index <= DetectedMonCount) && !IsMonitorDisabled(A_Index)
         if MonOvrButtons.Has(A_Index) {
             isMonOvrOn := isConn && MonitorOverrideActive.Get(A_Index, false)
-            MonOvrButtons[A_Index].Text := isMonOvrOn ? "Ovr : ON" : "Ovr : OFF"
+            SetCtrlText(MonOvrButtons[A_Index], isMonOvrOn ? "Ovrd : ON" : "Ovrd : OFF")
             SetButtonColor(MonOvrButtons[A_Index], isMonOvrOn ? BtnColorMonOvrOn : BtnColorMonOvrOff)
         }
     }
 
     conflicts := DetectRuleConflicts()
     if conflicts.Length = 0 {
-        LblConflictStatus.Opt("c" Th("ok"))
-        LblConflictStatus.Value := "✓ No rule or override contradictions"
-        BtnFixConflicts.Enabled := false
+        SetCtrlColor(LblConflictStatus, Th("ok"))
+        SetCtrlValue(LblConflictStatus, "✓ No rule or override contradictions")
+        SetCtrlEnabled(BtnFixConflicts, false)
     } else {
         msgs := []
         for c in conflicts
             msgs.Push(c.msg)
-        LblConflictStatus.Opt("c" Th("err"))
-        LblConflictStatus.Value := "⚠ " JoinStrings(msgs, " | ")
-        BtnFixConflicts.Enabled := true
+        SetCtrlColor(LblConflictStatus, Th("err"))
+        SetCtrlValue(LblConflictStatus, "⚠ " JoinStrings(msgs, " | "))
+        SetCtrlEnabled(BtnFixConflicts, true)
     }
 
     UpdateQuickActionButtons()
@@ -2076,10 +2385,15 @@ ApplyDeviceAliases(devs) {
 DeviceWinName(devId) {
     if IsObject(d := FindCachedDevice(devId))
         return d.winLabel
-    if RegExMatch(devId, MultiDevNames.Has(NormDevId(devId)) ? "^(.+?)\\Device\\(.+?)\\Render$"
-                                                             : "^(?:\d+-\s*)?(.+?)\\Device\\(.+?)\\Render$", &m)
+    if RegExMatch(devId, MultiDevNames.Has(NormDevId(devId)) ? "^(.+?)\\Device\\(.+?)\\(?:Render|Capture)$"
+                                                             : "^(?:\d+-\s*)?(.+?)\\Device\\(.+?)\\(?:Render|Capture)$", &m)
         return m[2] "  [" m[1] "]"
     return devId
+}
+
+; Name of a microphone for status texts ("Windows default mic" for the default).
+MicDisplayName(micId) {
+    return (micId = "" || micId = DEFAULT_CAPTURE_DEVICE) ? "Windows default mic" : ShortDeviceName(micId)
 }
 
 DeviceHidden(id, kind) {
@@ -2087,14 +2401,14 @@ DeviceHidden(id, kind) {
 }
 
 ShortDeviceName(devId) {
-    if devId = DEFAULT_DEVICE || devId = ""
+    if devId = DEFAULT_DEVICE || devId = "" || devId = DEFAULT_CAPTURE_DEVICE
         return "Windows Default"
     if IsObject(d := FindCachedDevice(devId))
         return d.label
     if DeviceAliases.Has(DevKey(devId))
         return DeviceAliases[DevKey(devId)]
-    if RegExMatch(devId, MultiDevNames.Has(NormDevId(devId)) ? "^(.+?)\\Device\\(.+?)\\Render$"
-                                                             : "^(?:\d+-\s*)?(.+?)\\Device\\(.+?)\\Render$", &m)
+    if RegExMatch(devId, MultiDevNames.Has(NormDevId(devId)) ? "^(.+?)\\Device\\(.+?)\\(?:Render|Capture)$"
+                                                             : "^(?:\d+-\s*)?(.+?)\\Device\\(.+?)\\(?:Render|Capture)$", &m)
         return m[2] "  [" m[1] "]"                 ; same form as the device list: Name  [Adapter]
     return devId
 }
@@ -2132,6 +2446,20 @@ ShowDevicesDialog(*) {
     }
     addSaved(AllDevice), addSaved(AllMonitorsDevice)
 
+    ; microphones: connected ones, then paired ones that are disconnected
+    micRows := [], micSeen := Map()
+    micSeen.CaseSense := false
+    for m in CachedMics {
+        micSeen[DevKey(m.id)] := true
+        micRows.Push({id: m.id, name: m.winLabel, conn: true})
+    }
+    for k, micId in DeviceMics {
+        if micId != "" && !micSeen.Has(DevKey(micId)) {
+            micSeen[DevKey(micId)] := true
+            micRows.Push({id: micId, name: DeviceWinName(micId), conn: false})
+        }
+    }
+
     ownerHwnd := 0
     try {
         if IsObject(MainGui) && DllCall("IsWindowVisible", "Ptr", MainGui.Hwnd)
@@ -2140,17 +2468,33 @@ ShowDevicesDialog(*) {
     dlg := Gui("-MaximizeBox -MinimizeBox" (ownerHwnd ? " +Owner" ownerHwnd : " +AlwaysOnTop"), "Devices")
     DevicesDlg := dlg
     dlg.BackColor := Th("bg")
+    dlg.AddButton("x0 y0 w0 h0")                   ; invisible first control: takes the focus when the window opens,
+                                                   ; so no text box gets the cursor until you click one
+    W := 1084                                      ; client width
 
     cols := [["o", "Output", 520], ["m", "Monitor ovr", 600], ["a", "App ovr", 680], ["t", "Temp ovr", 760]]
     dlg.SetFont("s9 Bold c" Th("text2"), "Segoe UI")
-    dlg.AddText("x16 y14 w300", "Device (Windows name)")
+    dlg.AddText("x16 y14 w300", "Playback device (Windows name)")
     dlg.AddText("x330 y14 w170", "Display name")
+    AddTip(dlg.AddText("x488 y14 w304 Center +0x100", "Show in these lists"), "Untick a device to hide it from that list.`nA device already selected somewhere stays shown there.")
+    AddTip(dlg.AddText("x812 y14 w256 +0x100", "Paired microphone"), "The microphone of a monitor whose Output is this device.`n"
+        . "Also the suggested microphone of an Override Mic that uses this device.")
+    dlg.SetFont("s8 Norm c" Th("muted"), "Segoe UI")
     for c in cols
-        dlg.AddText("x" (c[3] - 32) " y14 w80 Center", c[2])
+        dlg.AddText("x" (c[3] - 32) " y32 w80 Center", c[2])
+    dlg.AddText("x330 y32 w170", "used by this app only")
+    dlg.AddText("x812 y32 w256", "box : untick to pause the pair")
+
+    ; the microphone choices (each row adds its own disconnected microphone when it has one)
+    micLabels := ["Windows default microphone"], micIds := [DEFAULT_CAPTURE_DEVICE]
+    for m in CachedMics {
+        micLabels.Push(m.label)
+        micIds.Push(m.id)
+    }
 
     dlg.SetFont("s9 Norm c" Th("text"), "Segoe UI")
     ctrls := []
-    y := 40
+    y := 54
     for r in rows {
         dlg.AddText("x16 y" (y + 3) " w306 h18 +0x4000 c" (r.conn ? Th("text") : Th("muted"))
             , (r.conn ? "" : "[Disconnected] ") r.name)                        ; 0x4000 = end ellipsis
@@ -2161,31 +2505,101 @@ ShowDevicesDialog(*) {
             cb.Value := DeviceHidden(r.id, c[1]) ? 0 : 1
             cbs[c[1]] := cb
         }
-        ctrls.Push({id: r.id, edit: e, cbs: cbs})
+        labels := micLabels.Clone(), ids := micIds.Clone()
+        cur := DeviceMics.Get(DevKey(r.id), "")
+        chosen := 1
+        if cur != "" {
+            for i, id in ids {
+                if i > 1 && DevKey(id) = DevKey(cur) {
+                    chosen := i
+                    break
+                }
+            }
+            if chosen = 1 {                        ; paired microphone not connected: keep it selectable
+                labels.Push("[Disconnected] " DeviceWinName(cur))
+                ids.Push(cur)
+                chosen := ids.Length
+            }
+        }
+        paused := cur != "" && DevicePairOff.Has(DevKey(r.id))
+        pc := dlg.AddCheckbox("x812 y" (y + 2) " w16 h20" (cur = "" ? " Disabled" : ""))
+        pc.Value := paused ? 0 : 1
+        dd := dlg.AddDropDownList("x834 y" (y - 1) " w234" (paused ? " Disabled" : ""), labels)
+        dd.Choose(chosen)
+        pc.OnEvent("Click", pairBoxClicked.Bind(dd))
+        dd.OnEvent("Change", pairMicChanged.Bind(pc, ids))
+        ctrls.Push({id: r.id, edit: e, cbs: cbs, mic: dd, micIds: ids, pair: pc})
         y += 28
     }
 
+    ; microphones: display names only
+    y += 10
+    dlg.SetFont("s9 Bold c" Th("text2"), "Segoe UI")
+    dlg.AddText("x16 y" y " w300", "Microphone (Windows name)")
+    dlg.AddText("x330 y" y " w170", "Display name")
+    dlg.SetFont("s9 Norm c" Th("text"), "Segoe UI")
+    y += 26
+    micCtrls := []
+    if !micRows.Length {
+        dlg.AddText("x16 y" (y + 3) " w480 c" Th("muted"), "(no microphones found)")
+        y += 28
+    }
+    for r in micRows {
+        dlg.AddText("x16 y" (y + 3) " w306 h18 +0x4000 c" (r.conn ? Th("text") : Th("muted"))
+            , (r.conn ? "" : "[Disconnected] ") r.name)
+        e := dlg.AddEdit("x330 y" y " w170 h22", DeviceAliases.Get(DevKey(r.id), ""))
+        micCtrls.Push({id: r.id, edit: e})
+        y += 28
+    }
+
+    y += 6
+    chkMics := dlg.AddCheckbox("x16 y" y " w" (W - 32) " h20", "Switch microphones  (each app uses its monitor's microphone, or its Override Mic)")
+    chkMics.Value := MicsFollowOutput ? 1 : 0
+    AddTip(chkMics, "Unchecked: Screen Audio Router never changes microphones.`n"
+        . "Nothing paired and no Override Mic = microphones are left alone too.")
+    y += 26
+
     dlg.SetFont("s8 c" Th("muted"), "Segoe UI")
-    dlg.AddText("x16 y" (y + 6) " w780 h30"
-        , "Display names are used by this app only; Windows keeps its own names. Leave a name empty to use the Windows name.`n"
-        . "Untick a device to hide it from that list. A device already selected somewhere stays shown there.")
-    y += 44
+    dlg.AddText("x16 y" (y + 6) " w" (W - 32) " h72"
+        , "Display name : your own short name for a device, used by this app only. Empty = the Windows name.`n"
+        . "Show in these lists : untick to hide a device from the Output, Monitor override, App override or Temporary override lists.`n"
+        . "Paired microphone : every app on a monitor uses the microphone paired with that monitor's Output (none = Windows default). Untick its box to pause the pair; the microphone is kept.`n"
+        . "Overrides change only the sound. To switch the microphone too, tick Override Mic for that app, or Mic for that monitor.`n"
+        . "Its list starts on `"Paired`" = the microphone paired here with the override device.")
+    y += 86
     dlg.SetFont("s9 Norm c" Th("text"), "Segoe UI")
     bRefresh := AddColoredButton(dlg, "x16 y" y " w110 h28", "Refresh", ColorDefault)
     bReplace := AddColoredButton(dlg, "x132 y" y " w130 h28", "Replace Device...", ColorDefault)
-    bSave := AddColoredButton(dlg, "x572 y" y " w110 h28", "Save", ColorDefault)
-    bCancel := AddColoredButton(dlg, "x688 y" y " w110 h28", "Cancel", ColorDefault)
+    bSave := AddColoredButton(dlg, "x" (W - 248) " y" y " w110 h28", "Save", ColorDefault)
+    bCancel := AddColoredButton(dlg, "x" (W - 132) " y" y " w110 h28", "Cancel", ColorDefault)
     AddTip(bRefresh, "Read the device list again (unsaved changes here are discarded).")
     AddTip(bReplace, "Swap one device for another in every output and override at once,`ne.g. after a driver update renamed it or it moved to another port.")
 
+    ; "Pair" box: unticked = paused, its microphone list greyed out (kept)
+    pairBoxClicked(ddCtrl, box, *) {
+        ddCtrl.Enabled := box.Value ? true : false
+    }
+    ; no microphone chosen = nothing to pause
+    pairMicChanged(box, idList, ddCtrl, *) {
+        hasMic := ddCtrl.Value && idList[ddCtrl.Value] != DEFAULT_CAPTURE_DEVICE
+        box.Enabled := hasMic ? true : false
+        if !hasMic
+            box.Value := 1
+    }
+    saveAlias(id, editCtrl) {
+        k := DevKey(id)
+        nm := Trim(StrReplace(editCtrl.Value, "|"))
+        if nm = "" || nm = DeviceWinName(id)
+            MapDel(DeviceAliases, k)
+        else
+            DeviceAliases[k] := nm
+    }
     save(*) {
+        global MicsFollowOutput
+        wasActive := MicRoutingActive()
         for c in ctrls {
             k := DevKey(c.id)
-            nm := Trim(StrReplace(c.edit.Value, "|"))
-            if nm = "" || nm = DeviceWinName(c.id)
-                MapDel(DeviceAliases, k)
-            else
-                DeviceAliases[k] := nm
+            saveAlias(c.id, c.edit)
             hid := ""
             for kind, cb in c.cbs {
                 if !cb.Value
@@ -2195,10 +2609,29 @@ ShowDevicesDialog(*) {
                 MapDel(DeviceHideMap, k)
             else
                 DeviceHideMap[k] := hid
+            mi := c.mic.Value
+            if !mi || c.micIds[mi] = DEFAULT_CAPTURE_DEVICE {
+                MapDel(DeviceMics, k)
+                MapDel(DevicePairOff, k)
+            } else {
+                DeviceMics[k] := c.micIds[mi]
+                if c.pair.Value
+                    MapDel(DevicePairOff, k)
+                else
+                    DevicePairOff[k] := true
+            }
         }
+        for c in micCtrls
+            saveAlias(c.id, c.edit)
+        MicsFollowOutput := chkMics.Value ? true : false
         ApplyDeviceAliases(CachedDevices)
+        ApplyDeviceAliases(CachedMics)
         SaveConfig()
         SetupTrayMenu()
+        dlg.Destroy()
+        if wasActive && !MicRoutingActive()
+            ResetTrackedAppMics()                  ; switched off: microphones back to the Windows default
+        ReapplyAll(false, true)                    ; new pairs apply right away
         try {
             if IsObject(MainGui) && DllCall("IsWindowVisible", "Ptr", MainGui.Hwnd) {
                 PopulateMonitorDropdowns()
@@ -2207,7 +2640,6 @@ ShowDevicesDialog(*) {
                 PopulateAppList(true)
             }
         }
-        dlg.Destroy()
         Tip("Device settings saved")
     }
     refresh(*) {
@@ -2230,10 +2662,10 @@ ShowDevicesDialog(*) {
         try {
             WinGetPos(&mx, &my, &mw, &mh, ownerHwnd)
             sc := A_ScreenDPI / 96
-            pos := Format("x{1} y{2} ", mx + (mw - Round(830 * sc)) // 2, my + Max(0, (mh - Round((h + 40) * sc)) // 2))
+            pos := Format("x{1} y{2} ", mx + (mw - Round((W + 16) * sc)) // 2, my + Max(0, (mh - Round((h + 40) * sc)) // 2))
         }
     }
-    dlg.Show(pos "w814 h" h)
+    dlg.Show(pos "w" W " h" h)
 }
 
 ; ------------------------------ REPLACE DEVICE ------------------------------
@@ -2412,6 +2844,11 @@ ReplaceDeviceEverywhere(oldId, newId) {
         AllDevice := newId, count++
     if AllMonitorsDevice = oldId
         AllMonitorsDevice := newId, count++
+    if newId != DEFAULT_DEVICE && DeviceMics.Has(DevKey(oldId)) && !DeviceMics.Has(DevKey(newId)) {
+        DeviceMics[DevKey(newId)] := DeviceMics[DevKey(oldId)]      ; its microphone comes along
+        if DevicePairOff.Has(DevKey(oldId))
+            DevicePairOff[DevKey(newId)] := true
+    }
     MapDel(WarnedMissing, DevKey(oldId))
     SaveConfig()
     SaveState()

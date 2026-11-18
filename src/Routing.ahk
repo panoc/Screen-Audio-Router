@@ -46,8 +46,10 @@ SetMasterRoutingEnabled(enable, showOsd := true) {
 }
 
 ; ------------------------------ CONTRADICTION DETECTION & AVOIDANCE ---------
+; A monitor is off while its "Enabled" box is unticked. Its Output, Ovrd and Mic settings
+; are kept, so ticking it again brings them back.
 IsMonitorDisabled(mIdx) {
-    return MonitorRules.Get(mIdx, DEFAULT_DEVICE) = DISABLED_MONITOR
+    return MonitorOff.Has(mIdx)
 }
 
 FindAlternativeDevice(excludeId) {
@@ -75,7 +77,7 @@ SanitizeConfigConflicts(silent := false) {
     Loop DetectedMonCount {
         mIdx := A_Index
         normDev := MonitorRules.Get(mIdx, DEFAULT_DEVICE)
-        if normDev = DISABLED_MONITOR
+        if IsMonitorDisabled(mIdx)
             continue
         ovrDev  := MonitorOverrideRules.Get(mIdx, DEFAULT_DEVICE)
         if normDev != DEFAULT_DEVICE && normDev = ovrDev {
@@ -129,7 +131,7 @@ DetectRuleConflicts() {
     Loop DetectedMonCount {
         mIdx := A_Index
         normDev := MonitorRules.Get(mIdx, DEFAULT_DEVICE)
-        if normDev = DISABLED_MONITOR
+        if IsMonitorDisabled(mIdx)
             continue
         ovrDev  := MonitorOverrideRules.Get(mIdx, DEFAULT_DEVICE)
         isOvrOn := MonitorOverrideActive.Get(mIdx, false)
@@ -566,17 +568,18 @@ RunEndpointCheck() {
     }
 }
 
-; Reads the playback devices from the registry. Returns true when the active set changed.
-; Ids are rebuilt in SoundVolumeView's "Command-Line Friendly ID" form
-; ("<adapter>\Device\<name>\Render") so they compare with the saved ones.
+; Reads the playback and recording devices from the registry. Returns true when the active
+; set changed. Ids are rebuilt in SoundVolumeView's "Command-Line Friendly ID" form
+; ("<adapter>\Device\<name>\Render" or "...\Capture") so they compare with the saved ones.
 RefreshEndpointState() {
     global AudioEndpointSig, EndpointActive, EndpointKnown, EndpointActiveX, EndpointKnownX
     act := Map(), known := Map(), actX := Map(), knownX := Map(), cnt := Map()
     act.CaseSense := false, known.CaseSense := false, actX.CaseSense := false, knownX.CaseSense := false
     cnt.CaseSense := false
     sig := ""
-    try {
-        Loop Reg, "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render", "K" {
+    for flowName in ["Render", "Capture"] {
+      try {
+        Loop Reg, "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\" flowName, "K" {
             key := A_LoopRegKey "\" A_LoopRegName
             st := 0, name := "", adapter := ""
             try st := RegRead(key, "DeviceState")
@@ -585,7 +588,7 @@ RefreshEndpointState() {
             if adapter = ""
                 try adapter := RegRead(key "\Properties", "{026e516e-b814-414b-83cd-856d6fef4822},2")
             if name != "" && adapter != "" {
-                full := adapter "\Device\" name "\Render"
+                full := adapter "\Device\" name "\" flowName
                 n := NormDevId(full)
                 known[n] := true, knownX[full] := true
                 if st = 1 {
@@ -594,8 +597,9 @@ RefreshEndpointState() {
                 }
             }
             if st = 1
-                sig .= A_LoopRegName "|"
+                sig .= SubStr(flowName, 1, 1) A_LoopRegName "|"
         }
+      }
     }
     changed := (sig != AudioEndpointSig)
     AudioEndpointSig := sig
@@ -633,18 +637,23 @@ LearnIdentical(n) {
 ; The entry of the current device list that is this device: exact id first, then (only
 ; for a device you own one of) the same device under a renumbered name.
 FindCachedDevice(id) {
-    if id = "" || id = DEFAULT_DEVICE
+    if id = "" || id = DEFAULT_DEVICE || id = DEFAULT_CAPTURE_DEVICE
         return ""
-    for d in CachedDevices {
-        if d.id = id
-            return d
+    lists := InStr(id, "\Capture") ? [CachedMics] : [CachedDevices]   ; ids end in \Render or \Capture
+    for lst in lists {
+        for d in lst {
+            if d.id = id
+                return d
+        }
     }
     n := NormDevId(id)
     if MultiDevNames.Has(n)                        ; two of them: never swap one for the other
         return ""
-    for d in CachedDevices {
-        if NormDevId(d.id) = n
-            return d
+    for lst in lists {
+        for d in lst {
+            if NormDevId(d.id) = n
+                return d
+        }
     }
     return ""
 }
@@ -658,7 +667,7 @@ ResolveDeviceId(id) {
 ; True unless Windows knows the device and it is not active (unplugged, disabled,
 ; removed). A device the registry scan cannot match is treated as present: no false alarms.
 DevicePresent(id) {
-    if id = "" || id = DEFAULT_DEVICE || id = DISABLED_MONITOR
+    if id = "" || id = DEFAULT_DEVICE || id = DISABLED_MONITOR || id = DEFAULT_CAPTURE_DEVICE
         return true
     n := NormDevId(id)
     if MultiDevNames.Has(n) {                      ; two of them: exact id only
@@ -681,7 +690,7 @@ AssignedDeviceUses() {
     uses := Map()
     uses.CaseSense := false
     add(id, who, mon := 0) {
-        if id = "" || id = DEFAULT_DEVICE || id = DISABLED_MONITOR
+        if id = "" || id = DEFAULT_DEVICE || id = DISABLED_MONITOR || id = DEFAULT_CAPTURE_DEVICE
             return
         n := DevKey(id)
         if uses.Has(n)
@@ -714,6 +723,24 @@ AssignedDeviceUses() {
         for app, dev in AppFixedDevice {
             if Apps.Get(app, false)
                 add(dev, app " fixed device", LastSeen.Get(app, 0))
+        }
+    }
+    if MicRoutingActive() {                        ; microphones of the monitors and active Mic overrides
+        if !DisableMonitorRouting {
+            Loop DetectedMonCount {
+                m := A_Index
+                if IsMonitorDisabled(m)
+                    continue
+                add(PairedMicOf(MonitorRules.Get(m, DEFAULT_DEVICE)), "Monitor " m " microphone", m)
+                if MonitorOverrideActive.Get(m, false) && MonMicOn.Has(m)
+                    add(MonMicTarget(m), "Monitor " m " mic override", m)
+            }
+        }
+        if !DisableAppRouting {
+            for app, on in AppOverrideActive {
+                if on && Apps.Get(app, false) && AppMicOn.Has(app)
+                    add(AppMicTarget(app), app " mic override", LastSeen.Get(app, 0))
+            }
         }
     }
     return uses
@@ -805,18 +832,36 @@ RouteAppNow(app, force := false) {
     prev := LastRouted.Get(app, "")
     prevMon := IsObject(prev) ? prev.mon : 0
     prevDev := IsObject(prev) ? prev.dev : ""
+    prevMic := IsObject(prev) && prev.HasOwnProp("mic") ? prev.mic : ""
 
     mon := CurrentMonitor(app)
     tgt := GetRoutingTarget(app, mon)
     targetDev := tgt.dev
+    micT := MicRoutingActive() ? MicForApp(app, mon) : {mic: "", missing: ""}
+    targetMic := micT.mic                          ; "" = microphones are left alone
 
-    if !force && IsObject(prev) && prevMon = mon && prevDev = targetDev
+    if !force && IsObject(prev) && prevMon = mon && prevDev = targetDev && prevMic = targetMic
         return
 
-    LastRouted[app] := {mon: mon, dev: targetDev}
-    LogLine(Format("Route {1}  mon {2}  -> {3}{4}", app, mon, ShortDeviceName(targetDev)
-        , tgt.missing != "" ? "   (" ShortDeviceName(tgt.missing) " missing)" : ""))
-    SetDevice(app, targetDev)
+    LastRouted[app] := {mon: mon, dev: targetDev, mic: targetMic}
+    LogLine(Format("Route {1}  mon {2}  -> {3}{4}{5}", app, mon, ShortDeviceName(targetDev)
+        , tgt.missing != "" ? "   (" ShortDeviceName(tgt.missing) " missing)" : ""
+        , targetMic = "" ? "" : "   mic " MicDisplayName(targetMic) (micT.missing != "" ? " (" ShortDeviceName(micT.missing) " missing)" : "")))
+    SetDevice(app, targetDev, targetMic)
+    if targetMic != "" && targetMic != DEFAULT_CAPTURE_DEVICE && AppSystemMic.Get(app, false)
+        && (force || targetMic != prevMic)
+        SetSystemDefaultMic(targetMic)
+
+    if DeviceWarnings && !IsStartingUp && A_TickCount >= DeviceWarnReadyAt && micT.missing != "" && tgt.missing = "" {
+        k := app "|" DevKey(micT.missing)
+        if !WarnedApp.Has(k) {                     ; once per app and microphone, until it returns
+            WarnedApp[k] := micT.missing
+            WarnedMissing[DevKey(micT.missing)] := micT.missing
+            ShowOsdToast(Format("{1} {2} : microphone {3} is not connected`nUsing the Windows default microphone instead"
+                , Chr(0x26A0), FormatAppDisplayName(app), ShortDeviceName(micT.missing)), mon, "warn")
+            return
+        }
+    }
 
     if DeviceWarnings && !IsStartingUp && A_TickCount >= DeviceWarnReadyAt && tgt.missing != "" {
         k := app "|" DevKey(tgt.missing)
@@ -1213,9 +1258,66 @@ AppWindow(app) {
 
 CurrentMonitor(app) {
     mon := WindowMonitor(FindWindow(app))
+    if !mon && !LastSeen.Has(app) && ScanRunning.Has(app)
+        mon := ParkedWindowMonitor(app)            ; never seen on screen: minimized or in the tray
     if mon
         LastSeen[app] := mon
     return LastSeen.Get(app, 0)
+}
+
+; An app that has never been on screen since the script started (minimized before, or closed
+; to the tray like Discord): the monitor its main window comes back to when restored, from the
+; position Windows keeps for it. A minimized window beats a hidden one, then the bigger one.
+; Checked at most every 3 s per app.
+ParkedWindowMonitor(app) {
+    static lastTry := Map()
+    if lastTry.Has(app) && A_TickCount - lastTry[app] < 3000
+        return 0
+    lastTry[app] := A_TickCount
+    best := 0, bestScore := 0
+    prevHidden := A_DetectHiddenWindows
+    DetectHiddenWindows(true)
+    try {
+        for pid in ScanPids.Get(app, []) {
+            for hwnd in WinGetList("ahk_pid " pid) {
+                try {
+                    if (WinGetExStyle(hwnd) & 0x80)                        ; WS_EX_TOOLWINDOW
+                        || !(WinGetStyle(hwnd) & 0xC40000)                 ; no title bar / sizing border
+                        || DllCall("GetWindow", "Ptr", hwnd, "UInt", 4, "Ptr")   ; GW_OWNER: a dialog
+                        || WinGetTitle(hwnd) = ""
+                        continue
+                    rc := WindowRestoreRect(hwnd)
+                    w := rc.r - rc.l, h := rc.b - rc.t
+                    if w < 200 || h < 150
+                        continue
+                    score := w * h + (DllCall("IsIconic", "Ptr", hwnd) ? 0x40000000 : 0)
+                    if score > bestScore
+                        best := rc, bestScore := score
+                }
+            }
+        }
+    }
+    DetectHiddenWindows(prevHidden)
+    if !best
+        return 0
+    return MonitorAt(best.l + (best.r - best.l) // 2, best.t + (best.b - best.t) // 2)
+}
+
+; Where the window is when not minimized / maximized (screen coordinates).
+WindowRestoreRect(hwnd) {
+    wp := Buffer(44, 0)
+    NumPut("UInt", 44, wp, 0)
+    DllCall("GetWindowPlacement", "Ptr", hwnd, "Ptr", wp)
+    l := NumGet(wp, 28, "Int"), t := NumGet(wp, 32, "Int"), r := NumGet(wp, 36, "Int"), b := NumGet(wp, 40, "Int")
+    ; the position is relative to the main screen's work area (it moves when the taskbar is on the left or top)
+    try {
+        prim := MonitorGetPrimary()
+        MonitorGet(prim, &ml, &mt)
+        MonitorGetWorkArea(prim, &wl, &wt)
+        dx := wl - ml, dy := wt - mt
+        l += dx, r += dx, t += dy, b += dy
+    }
+    return {l: l, t: t, r: r, b: b}
 }
 
 MonitorAt(px, py) {

@@ -566,9 +566,9 @@ SetupTrayMenu() {
     }
 
     A_TrayMenu.Add()
-    A_TrayMenu.Add("Reset All App Overrides", ResetAllAppOverrides)
-    A_TrayMenu.Add("Reset All Monitor Overrides", ResetAllMonitorOverrides)
-    A_TrayMenu.Add("Reset All Overrides (Apps && Monitors)", ResetAllOverridesEverything)
+    A_TrayMenu.Add("End All App Overrides", ResetAllAppOverrides)
+    A_TrayMenu.Add("End All Monitor Overrides", ResetAllMonitorOverrides)
+    A_TrayMenu.Add("End All Overrides (Apps && Monitors)", ResetAllOverridesEverything)
     A_TrayMenu.Add()
     A_TrayMenu.Add("Replace Device...", ShowReplaceDeviceDialog)
     betaSub := Menu()
@@ -587,6 +587,9 @@ SetupTrayMenu() {
     setSub.Add("Export settings...", ExportSettings)
     setSub.Add("Import settings...", ImportSettings)
     setSub.Add("Open settings folder", (*) => Run('explorer.exe "' A_ScriptDir '"'))
+    setSub.Add()
+    setSub.Add("Reset overrides to defaults...", ResetOverridesToDefaults)
+    setSub.Add("Reset all settings...", ResetAllSettings)
     A_TrayMenu.Add("Settings", setSub)
     A_TrayMenu.Add("Start with Windows", ToggleAutoStartFromTray)
     if IsAutoStartEnabled()
@@ -784,7 +787,7 @@ UpdateTrayIndicators() {
                 want[2011] := {res: 109, kind: "allapps", key: ""
                     , tip: "All-Apps override`n→ " TrayDevName(AllDevice)}
             for app, on in AppOverrideActive {
-                if !on || !Apps.Get(app, false)
+                if !on || !Apps.Get(app, false) || AppHideTrayIcon.Has(app)   ; "Hide tray icon" ticked
                     continue
                 if !AppTrayIds.Has(app)
                     AppTrayIds[app] := NextAppTrayId++
@@ -960,7 +963,7 @@ RemoveExtraTrayIcons(*) {
 ; Removes entries of controls that no longer exist (GUI rebuilt or closed), so the maps
 ; do not grow and a reused window handle never picks up an old color or tooltip.
 PurgeDeadControlMaps() {
-    for m in [BtnColorMap, HoverTips, ThemedLVs] {
+    for m in [BtnColorMap, HoverTips, ThemedLVs, LvRowColors, ListHotRow, ListRowTips, CtrlColorCache, DdlItemCache, DarkChecks] {
         for h in m.Clone() {
             if !DllCall("IsWindow", "Ptr", h)
                 m.Delete(h)

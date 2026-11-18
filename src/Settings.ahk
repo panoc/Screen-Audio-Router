@@ -13,7 +13,7 @@ BackupSettingsOnNewVersion() {
     if !FileExist(IniFile)
         return
     last := IniRead(IniFile, "Settings", "LastVersion", "")
-    if last = APP_VERSION
+    if last = APP_VERSION || (last = "" && IniRead(IniFile, "Settings", "ShowWindowOnce", "") = "1")   ; fresh after Reset all
         return
     try FileCopy(IniFile, IniFile "." (last != "" ? last : "old") ".bak", true)
 }
@@ -35,7 +35,73 @@ ExportSettings(*) {
     }
 }
 
+; ------------------------------ RESETS --------------------------------------
+; Every override setting back to its first-start default: all overrides off, every override
+; device back to Windows Default, every Mic override off (and back to "Paired").
+; Tracked apps, monitor outputs, Follow monitor, hotkeys, names, microphone pairs and the
+; options are kept. A copy of the settings is saved first.
+ResetOverridesToDefaults(*) {
+    global AllMode, AllMonitorsMode, AllDevice, AllMonitorsDevice
+    try MainGui.Opt("+OwnDialogs")
+    if MsgBox("Set every override back to its default?`n`n"
+        . "  •  all overrides off (app, temporary, All-Apps, monitor, All-Monitors)`n"
+        . "  •  all override devices back to Windows Default`n"
+        . "  •  all Mic overrides off (back to Paired)`n`n"
+        . "Tracked apps, monitor outputs, hotkeys, device names, microphone pairs and options stay as they are.`n"
+        . "A copy of the current settings is saved as ScreenAudioRouter.ini.before-reset-overrides.bak."
+        , "Reset overrides", "YesNo Icon? Default2") != "Yes"
+        return
+    FlushPendingSave()
+    try FileCopy(IniFile, IniFile ".before-reset-overrides.bak", true)
+    AppOverrideActive.Clear(), AppOverrideRules.Clear(), AppTempOverride.Clear(), Released.Clear()
+    AllMode := false, AllDevice := DEFAULT_DEVICE
+    Loop MAX_MONITORS
+        MonitorOverrideActive[A_Index] := false
+    MonitorOverrideRules.Clear(), PrevMonitorOverrideActive.Clear()
+    AllMonitorsMode := false, AllMonitorsDevice := DEFAULT_DEVICE
+    AppMicOn.Clear(), AppMicDevice.Clear(), MonMicOn.Clear(), MonMicDevice.Clear()
+    SaveConfig()
+    SaveState()
+    SetupTrayMenu()
+    ReapplyAll(false, true)
+    try {
+        if IsObject(MainGui) && DllCall("IsWindowVisible", "Ptr", MainGui.Hwnd) {
+            PopulateMonitorDropdowns()
+            PopulateOverrideDeviceDropdowns()
+            RefreshSelectedAppPanel()
+            UpdateOverrideBanner()
+        }
+    }
+    ShowOsdToast("All overrides are back to their defaults", 1)
+}
+
+; Back to the first-start settings: the tracked apps go back to the Windows default device,
+; the settings file is replaced by an empty one (a dated copy is kept) and the app restarts
+; with its window open. "Start with Windows" (a Windows setting) is left as it is.
+ResetAllSettings(*) {
+    global SkipExitSave
+    try MainGui.Opt("+OwnDialogs")
+    if MsgBox("Return Screen Audio Router to its first-start settings?`n`n"
+        . "Tracked apps, monitor outputs, overrides, hotkeys, device names, microphone pairs and all options are cleared, "
+        . "and every tracked app goes back to the Windows default device.`n`n"
+        . "Your current settings are kept as a dated .bak copy next to the program (Import settings brings them back). "
+        . "The app restarts."
+        , "Reset all settings", "YesNo Icon! Default2") != "Yes"
+        return
+    FlushPendingSave()
+    for app, enabled in Apps {
+        if enabled
+            try SetDevice(app, DEFAULT_DEVICE)
+    }
+    try FileCopy(IniFile, IniFile ".before-reset-" FormatTime(, "yyyyMMdd-HHmmss") ".bak", true)
+    SkipExitSave := true                           ; nothing of the old settings is written on the way out
+    try FileDelete(IniFile)
+    try IniWrite("1", IniFile, "Settings", "ShowWindowOnce")
+    Reload()
+}
+
 ImportSettings(*) {
+    global SkipExitSave
     src := FileSelect(1, A_Desktop, "Import settings", "Settings (*.ini)")
     if src = ""
         return
@@ -50,6 +116,7 @@ ImportSettings(*) {
         Tip("Could not read " src)
         return
     }
+    SkipExitSave := true                           ; keep the imported file as it is
     Reload()
 }
 
@@ -295,10 +362,11 @@ StartupMissingCheck() {
 ; ------------------------------ PERSISTENCE ---------------------------------
 LoadConfig() {
     global PollMs, StartMinimized, AvoidConflicts, EnableTitleBarMenu, EnableAllAppsTitleBarMenu
-    global UseWinEvents, FallbackPollMs, DarkTheme, FollowFocusGlobal, TitleBarMenuKey, TitleBarHitTest
+    global UseWinEvents, FallbackPollMs, FollowFocusGlobal, TitleBarMenuKey, TitleBarHitTest
     global MainWinX, MainWinY, ToastSec, DeviceWarnings, WarningSound, NativeAudio, DebugLog
     global DisableAllRouting, DisableMonitorRouting, DisableAppRouting
     global HkOverrideFocused, HkOverrideAllMons, HkOverrideAll, HkReapply
+    global MicsFollowOutput, ShowWindowOnce
 
     pollRaw := IniRead(IniFile, "Settings", "PollMs", "500")
     PollMs  := IsInteger(pollRaw) ? Max(150, Min(Integer(pollRaw), 10000)) : 500
@@ -312,7 +380,6 @@ LoadConfig() {
     DisableAllRouting         := (IniRead(IniFile, "Settings", "DisableAllRouting", "0") = "1")
     DisableMonitorRouting     := (IniRead(IniFile, "Settings", "DisableMonitorRouting", "0") = "1")
     DisableAppRouting         := (IniRead(IniFile, "Settings", "DisableAppRouting", "0") = "1")
-    DarkTheme                 := (IniRead(IniFile, "Settings", "DarkTheme", "0") = "1")
     FollowFocusGlobal         := (IniRead(IniFile, "Settings", "FollowFocusedWindow", "0") = "1")
     tbKey                     := IniRead(IniFile, "Settings", "TitleBarMenuKey", "^RButton")
     TitleBarMenuKey           := TitleBarKeyIndex(tbKey) ? tbKey : "^RButton"
@@ -323,7 +390,16 @@ LoadConfig() {
     NativeAudio := (IniRead(IniFile, "Settings", "NativeAudio", "1") = "1")
     DebugLog := (IniRead(IniFile, "Settings", "DebugLog", "0") = "1")
     WarningSound := (IniRead(IniFile, "Settings", "WarningSound", "1") = "1")
+    MicsFollowOutput := (IniRead(IniFile, "Settings", "MicsFollowOutput", "1") = "1")
+    if IniRead(IniFile, "Settings", "ShowWindowOnce", "") = "1" {   ; set by Reset all settings
+        ShowWindowOnce := true
+        try IniDelete(IniFile, "Settings", "ShowWindowOnce")
+    }
     wx := IniRead(IniFile, "Settings", "WindowX", ""), wy := IniRead(IniFile, "Settings", "WindowY", "")
+    HkTakenShown.Clear()
+    for k in StrSplit(IniRead(IniFile, "Settings", "TakenShortcuts", ""), ",", " ")
+        if k != ""
+            HkTakenShown[k] := true
     MainWinX := IsInteger(wx) ? Integer(wx) : "", MainWinY := IsInteger(wy) ? Integer(wy) : ""
 
     HkOverrideFocused := IniRead(IniFile, "Hotkeys", "OverrideFocused", DEFAULT_HK_FOCUSED)
@@ -349,10 +425,18 @@ LoadConfig() {
         Apps[app] := (val != "0")
     }
 
-    MonitorRules.Clear()
+    MonitorRules.Clear(), MonitorOff.Clear()
     for monStr, devId in ReadSection("MonitorRules") {
-        if IsInteger(monStr) && devId != "" && devId != DEFAULT_DEVICE
+        if !IsInteger(monStr) || devId = "" || devId = DEFAULT_DEVICE
+            continue
+        if devId = DISABLED_MONITOR                 ; older versions: "Disabled" was an Output choice
+            MonitorOff[Integer(monStr)] := true
+        else
             MonitorRules[Integer(monStr)] := devId
+    }
+    for monStr, v in ReadSection("MonitorsOff") {   ; monitors with "Enabled" unticked
+        if IsInteger(monStr) && v = "1"
+            MonitorOff[Integer(monStr)] := true
     }
 
     MonitorOverrideRules.Clear()
@@ -387,6 +471,44 @@ LoadConfig() {
     for k, v in ReadSection("DeviceLists") {          ; H1=<device>|<lists it is hidden from>
         if (p := InStr(v, "|", , -1)) && SubStr(v, p + 1) != ""
             DeviceHideMap[SubStr(v, 1, p - 1)] := SubStr(v, p + 1)
+    }
+    DeviceMics.Clear()
+    for k, v in ReadSection("DeviceMics") {           ; M1=<playback device>|<its microphone>
+        if (p := InStr(v, "|")) && SubStr(v, p + 1) != ""
+            DeviceMics[SubStr(v, 1, p - 1)] := SubStr(v, p + 1)
+    }
+    DevicePairOff.Clear()
+    for k, v in ReadSection("DevicePairOff") {        ; P1=<playback device whose pair is paused>
+        if v != "" && DeviceMics.Has(v)
+            DevicePairOff[v] := true
+    }
+    AppSystemMic.Clear()
+    for app, val in ReadSection("AppSystemMic") {     ; apps whose microphone also becomes the Windows default
+        if app != "" && val = "1"
+            AppSystemMic[app] := true
+    }
+    AppHideTrayIcon.Clear()
+    for app, val in ReadSection("AppHideTrayIcon") {  ; apps without a tray icon while their override is on
+        if app != "" && val = "1"
+            AppHideTrayIcon[app] := true
+    }
+    AppMicOn.Clear(), AppMicDevice.Clear()
+    for app, val in ReadSection("AppMicOverride") {   ; <app>=<1 ticked / 0>|<microphone, empty = paired>
+        if app = "" || !(p := InStr(val, "|"))
+            continue
+        if SubStr(val, 1, 1) = "1"
+            AppMicOn[app] := true
+        if SubStr(val, p + 1) != ""
+            AppMicDevice[app] := SubStr(val, p + 1)
+    }
+    MonMicOn.Clear(), MonMicDevice.Clear()
+    for k, val in ReadSection("MonitorMicOverride") { ; <monitor>=<1 / 0>|<microphone, empty = paired>
+        if !IsInteger(k) || !(p := InStr(val, "|"))
+            continue
+        if SubStr(val, 1, 1) = "1"
+            MonMicOn[Integer(k)] := true
+        if SubStr(val, p + 1) != ""
+            MonMicDevice[Integer(k)] := SubStr(val, p + 1)
     }
 
     AppFollowFocus.Clear()
@@ -430,6 +552,8 @@ SaveAllNow() {
 
 FlushPendingSave(*) {
     global SavePending
+    if SkipExitSave
+        return
     if RememberMainWindowPos()           ; window still open at exit: keep where it is
         SavePending := true
     if SavePending
@@ -498,7 +622,6 @@ WriteIniNow() {
     IniKv(L, "DisableAllRouting", DisableAllRouting ? "1" : "0")
     IniKv(L, "DisableMonitorRouting", DisableMonitorRouting ? "1" : "0")
     IniKv(L, "DisableAppRouting", DisableAppRouting ? "1" : "0")
-    IniKv(L, "DarkTheme", DarkTheme ? "1" : "0")
     IniKv(L, "FollowFocusedWindow", FollowFocusGlobal ? "1" : "0")
     IniKv(L, "TitleBarMenuKey", TitleBarMenuKey)
     IniKv(L, "TitleBarHitTest", TitleBarHitTest ? "1" : "0")
@@ -508,6 +631,12 @@ WriteIniNow() {
     IniKv(L, "DebugLog", DebugLog ? "1" : "0")
     IniKv(L, "LastVersion", APP_VERSION)
     IniKv(L, "WarningSound", WarningSound ? "1" : "0")
+    IniKv(L, "MicsFollowOutput", MicsFollowOutput ? "1" : "0")
+    taken := ""
+    for k in HkTakenShown
+        taken .= (taken = "" ? "" : ",") k
+    if taken != ""
+        IniKv(L, "TakenShortcuts", taken)
     if IsInteger(MainWinX) && IsInteger(MainWinY) {
         IniKv(L, "WindowX", MainWinX)
         IniKv(L, "WindowY", MainWinY)
@@ -536,9 +665,13 @@ WriteIniNow() {
 
     IniSection(L, "MonitorRules")
     for mon, devId in MonitorRules {
-        if devId != "" && devId != DEFAULT_DEVICE
+        if devId != "" && devId != DEFAULT_DEVICE && devId != DISABLED_MONITOR
             IniKv(L, mon, devId)
     }
+
+    IniSection(L, "MonitorsOff")                  ; monitors with "Enabled" unticked
+    for mon in MonitorOff
+        IniKv(L, mon, "1")
 
     IniSection(L, "MonitorOverrideRules")
     for mon, devId in MonitorOverrideRules {
@@ -575,6 +708,40 @@ WriteIniNow() {
     i := 0
     for k, v in DeviceHideMap
         IniKv(L, "H" (++i), k "|" v)
+
+    IniSection(L, "DeviceMics")                   ; the microphone paired with each playback device
+    i := 0
+    for k, v in DeviceMics
+        IniKv(L, "M" (++i), k "|" v)
+
+    IniSection(L, "DevicePairOff")                ; pairs paused in the Devices window (microphone kept)
+    i := 0
+    for k in DevicePairOff
+        IniKv(L, "P" (++i), k)
+
+    IniSection(L, "AppSystemMic")                 ; apps whose microphone also becomes the Windows default
+    for app in AppSystemMic
+        IniKv(L, app, "1")
+
+    IniSection(L, "AppHideTrayIcon")              ; apps without a tray icon while their override is on
+    for app in AppHideTrayIcon
+        IniKv(L, app, "1")
+
+    IniSection(L, "AppMicOverride")               ; <1 ticked / 0>|<microphone, empty = paired with the override device>
+    seenMic := Map()
+    seenMic.CaseSense := false
+    for app in AppMicOn
+        seenMic[app] := true
+    for app in AppMicDevice
+        seenMic[app] := true
+    for app in seenMic
+        IniKv(L, app, (AppMicOn.Has(app) ? "1" : "0") "|" AppMicDevice.Get(app, ""))
+
+    IniSection(L, "MonitorMicOverride")           ; same, per monitor
+    Loop MAX_MONITORS {
+        if MonMicOn.Has(A_Index) || MonMicDevice.Has(A_Index)
+            IniKv(L, A_Index, (MonMicOn.Has(A_Index) ? "1" : "0") "|" MonMicDevice.Get(A_Index, ""))
+    }
 
     IniSection(L, "All")
     IniKv(L, "Active", AllMode ? "1" : "0")
