@@ -22,8 +22,8 @@
 ; ============================================================================
 ;@Ahk2Exe-SetName          Screen Audio Router
 ;@Ahk2Exe-SetDescription   Screen Audio Router
-;@Ahk2Exe-SetVersion       1.5.0
-;@Ahk2Exe-SetCopyright (C) 2026 panoc - GPLv3 - github.com/panoc.
+;@Ahk2Exe-SetVersion       1.6.0
+;@Ahk2Exe-SetCopyright (C) 2026 panoc - GPLv3 - github.com/panoc
 ;@Ahk2Exe-SetOrigFilename  Screen Audio Router.exe
 #Requires AutoHotkey v2.0
 #SingleInstance Force
@@ -32,7 +32,7 @@ CoordMode("Mouse", "Screen")
 CoordMode("Menu", "Screen")
 
 ; ------------------------------- CONFIG -------------------------------------
-APP_VERSION := "1.5.0"   ; keep equal to the SetVersion line at the top (b = beta)
+APP_VERSION := "1.6.0"   ; keep equal to the SetVersion line at the top (-betaN = test build)
 SVV      := A_ScriptDir "\SoundVolumeView.exe"
 IniFile  := A_ScriptDir "\ScreenAudioRouter.ini"
 IconDll   := FileExist(A_ScriptDir "\res\sor-icons.dll") ? A_ScriptDir "\res\sor-icons.dll" : A_ScriptDir "\sor-icons.dll"   ; 101 normal, 102 partial, 103 off, 104-107 monitors 1-4, 108 all monitors, 109 app
@@ -93,9 +93,9 @@ DisableAppRouting         := false
 ; ------------------------------- BUTTON COLORS ------------------------------
 ; Set any color using "#RRGGBB" or "RRGGBB", or "" to use the default GUI button.
 Color1 := "#15803D"   ; Green
-Color2 := "#1E40AF"   ; Blue
+Color2 := "#2D648E"   ; Blue
 Color3 := "#4B5563"   ; Slate Gray
-Color4 := "#DC2626"   ; Red
+Color4 := "#B73333"   ; Red
 Color5 := "#93D2FF"   ; Cyan
 Color6 := "#D97706"   ; Amber / Orange
 Color7  := "#64A9DB"   ; Cyan2
@@ -112,7 +112,7 @@ BtnColorApply          := Color8
 BtnColorClose          := Color4
 
 BtnColorMonOvrOff      := ColorDefault
-BtnColorMonOvrOn       := Color7
+BtnColorMonOvrOn       := Color2
 
 BtnColorAppOvrOff      := ColorDefault
 BtnColorAppOvrOn       := Color9
@@ -132,60 +132,34 @@ BtnColorQuickSelectedOn  := Color9
 BtnColorQuickAllAppsOff  := ColorDefault   ; "Toggle All-Apps Override"
 BtnColorQuickAllAppsOn   := Color9
 BtnColorQuickAllMonsOff  := ColorDefault   ; "Toggle All-Monitors Override"
-BtnColorQuickAllMonsOn   := Color7
+BtnColorQuickAllMonsOn   := Color2
 BtnColorHkSet          := ColorDefault
 BtnColorHkClear        := ColorDefault
 BtnColorHkReset        := ColorDefault
 BtnColorResetOverrides := ColorDefault
 BtnColorResetWinMixer  := ColorDefault
+BtnColorResetSettings  := Color4     ; "Reset All..." (all settings back to first start)
 
 ; Detected Running Apps window:
 BtnColorDetectWinDetect := ColorDefault
 BtnColorDetectWinAdd    := ColorDefault
 BtnColorDetectWinClose  := ColorDefault
 
+; Name of the selected app in the Per-App section (any ColorN, or "" for the theme's accent color):
+SelectedAppColor        := Color6
+
 ; ------------------------------- THEME --------------------------------------
-; Window colors for the light and the dark theme (hex RGB, no "#"). Change them here
-; and restart the script. Button colors are set above (Color1.. / BtnColor..).
+; Window colors (hex RGB, no "#"). Change them here and restart the script.
+; Button colors are set above (Color1.. / BtnColor..).
 
 APP_TITLE_SIZE := 20                    ; font size of the "Screen Audio Router" title (8-16)
+SELECTED_APP_SIZE := 11                 ; font size of the selected app's name in the Per-App section (9-14)
+TABLE_ROW_HEIGHT := 22                  ; height of the rows in the Tracked Applications table (18-40)
 
-THEME_LIGHT := Map(
-    "appTitle",     "64A9DB",   ; "Screen Audio Router" title
-    "frameTitle",   "111111",   ; titles of all frames ("Routed Audio Output Status", ...)
-    "frame",        "D1D5DB",   ; lines of all frames
-    "bg",           "F3F4F6",   ; window background
-    "text",         "111111",   ; normal text
-    "textHead",     "333333",   ; monitor titles
-    "text2",        "555555",   ; secondary text, row labels
-    "muted",        "888888",   ; disabled / hint text
-    "hint",         "6B7280",   ; empty hotkey boxes
-    "accent",       "1E40AF",   ; selected app name
-    "capture",      "1D4ED8",   ; hotkey box while capturing
-    "ok",           "15803D",   ; green status text
-    "warn",         "B45309",   ; amber status text
-    "err",          "DC2626",   ; red status text
-    "editBg",       "FFFFFF",   ; text and hotkey boxes
-    "listBg",       "FFFFFF",   ; tables
-    "selBg",        "0078D7",   ; selected table row
-    "selText",      "FFFFFF",   ; selected table row text
-    "gridLine",     "E5E7EB",   ; table grid (dark theme only)
-    "hdrBg",        "FFFFFF",   ; table header (dark theme only)
-    "hdrText",      "111111",
-    "hdrLine",      "E5E7EB",
-    "sepLine",      "D1D5DB",   ; lines between the monitor blocks
-    "btnDefault",   "FDFDFD",   ; ColorDefault buttons
-    "btnDisBg",     "E5E7EB",   ; disabled buttons
-    "btnDisFg",     "9CA3AF",
-    "btnDisBorder", "D1D5DB",
-    "hoverLift",    "28",       ; how much darker a button gets on hover (0-120)
-    "hoverBorder",  ""          ; hover outline color, "" = keep the normal border
-)
-
-THEME_DARK := Map(
+THEME := Map(
 ;    "appTitle",     "64A9DB",
-	"appTitle",     "64A9DB",
-    "frameTitle",   "64A9DB",
+	"appTitle",     "D1750C",
+    "frameTitle",   "D1750C",
     "frame",        "6B7280",
     "bg",           "1F2125",
     "text",         "C8CCD3",
@@ -195,24 +169,46 @@ THEME_DARK := Map(
     "hint",         "8B93A1",
     "accent",       "7AA2F7",
     "capture",      "60A5FA",
-    "ok",           "4ADE80",
-    "warn",         "FBBF24",
+    "ok",           "C8CCD3",
+    "warn",         "C8CCD3",
     "err",          "F87171",
+    "statusOvr",    "",         ; status bar while an override is on (not a warning), "" = text
     "editBg",       "2B2D31",
     "listBg",       "26282C",
-    "selBg",        "2F4A6E",
-    "selText",      "FFFFFF",
-    "gridLine",     "303238",
-    "hdrBg",        "26282C",
-    "hdrText",      "C8CCD3",
-    "hdrLine",      "3A3D44",
+    "rowBg",        "",
+    "rowText",      "",
+    "rowHoverLift", "-32",
+    "rowHoverText", "E3E8EF",
+    "selBg",        "2D648E",   ; selected table row
+    "selText",      "E3E8EF",
+    "selHoverLift", "0",
+    "selHoverText", "",
+    "ovrRowText",   "2B2D31",
+    "ovrRowHoverLift", "-42",
+    "ovrRowHoverText", "2B2D31",
+    "selOvrText",   "E3E8EF",         ; selected row with an override on (background = selBg), "" = BtnColorAppOvrOn
+    "selOvrStrip",  "4",        ; width of the override-colored strip on its left edge, 0 = none
+    "gridLine",     "26282C",   ; table grid: lines between the rows
+    "gridLineV",    "",         ; table grid: lines between the columns, "" = none
+    "hdrBg",        "3A3D44",
+    "hdrText",      "DADDE5",
+    "hdrLine",      "929499",
     "sepLine",      "3A3D44",
     "btnDefault",   "3A3D44",
+    "btnText",      "",         ; text of dark buttons, "" = text
+    "btnTextLight", "111111",   ; text of light buttons (a light ColorN)
+    "ddlBg",        "",         ; drop-down lists (closed), "" = btnDefault
+    "ddlText",      "",         ; drop-down lists: text (closed and open), "" = text
+    "ddlListBg",    "",         ; drop-down lists: the open list, "" = editBg
     "btnDisBg",     "2A2C31",
     "btnDisFg",     "6B7280",
     "btnDisBorder", "3A3D44",
-    "hoverLift",    "32",
-    "hoverBorder",  "7AA2F7"
+    "hoverLift",    "-32",
+    "hoverBorder",  "3A3D44",
+    "checkBg",      "2B2D31",   ; checkbox: box
+    "checkBorder",  "6B7280",   ; checkbox: box outline
+    "checkOnBg",    "2D648E",   ; checkbox: box when ticked
+    "checkMark",    "E3E8EF"    ; checkbox: tick mark
 )
 
 ; ------------------------------- STATE --------------------------------------
@@ -221,6 +217,7 @@ MonitorRules              := Map()    ; monNum -> normal deviceId
 MonitorOverrideRules      := Map()    ; monNum -> per-monitor override deviceId
 MonitorOverrideActive     := Map()    ; monNum -> bool (true = per-monitor override active)
 PrevMonitorOverrideActive := Map()    ; monNum -> bool (snapshot)
+MonitorOff                := Map()    ; monNum -> true: monitor unticked ("Enabled" off); its Output / Ovrd / Mic are kept
 
 AllMonitorsMode           := false    ; true when Global All-Monitors Override is ON
 AllMonitorsDevice         := DEFAULT_DEVICE
@@ -258,6 +255,21 @@ ScanWindow.CaseSense  := false
 IsStartingUp          := true
 
 CachedDevices       := []
+CachedMics          := []       ; active recording devices (microphones), same form as CachedDevices
+DeviceMics          := Map()    ; output device key -> the microphone paired with it (Devices window)
+DeviceMics.CaseSense := false
+DevicePairOff       := Map()    ; output device key -> true: its pair is paused (Windows default mic), the microphone is kept
+DevicePairOff.CaseSense := false
+MicsFollowOutput    := true     ; master switch for microphones (Devices window)
+AppMicOn            := Map()    ; app -> true: Mic override ticked (counts while the app's override is on)
+AppMicDevice        := Map()    ; app -> microphone of its Mic override ("" / none = paired with the override device)
+MonMicOn            := Map()    ; monitor -> true: Mic override ticked (counts while the monitor's override is on)
+MonMicDevice        := Map()    ; monitor -> microphone of its Mic override ("" / none = paired with the Ovrd device)
+AppMicOn.CaseSense := false, AppMicDevice.CaseSense := false
+AppSystemMic        := Map()    ; app -> true: also make its microphone the Windows default (per-app option)
+AppSystemMic.CaseSense := false
+AppHideTrayIcon     := Map()    ; app -> true: no tray icon while its override is on
+AppHideTrayIcon.CaseSense := false
 CachedCandidates    := []
 SelectedApp         := ""
 MonCount            := MAX_MONITORS
@@ -289,15 +301,25 @@ DeviceWarnings      := true     ; warn when an assigned output device is missing
 WarningSound        := true     ; play the Windows warning sound with those warnings
 EdtToastSec         := ""
 SavePending         := false    ; the INI has changes that have not been written yet
+SkipExitSave        := false    ; restarting after Import / Reset all: do not write the old settings back on exit
+ShowWindowOnce      := false    ; open the window once after a restart (Reset all)
 
-; Theme: active light / dark palettes, filled from THEME_LIGHT / THEME_DARK at the top.
-DarkTheme           := false
+; Theme: the palette in use, filled from THEME at the top.
 ExtraIcons          := Map()    ; tray id -> {res, tip, kind, key} of the extra override icons shown now
 AppTrayIds          := Map()    ; app -> its tray icon id (stable for the session)
 NextAppTrayId       := 2100
 TrayMainState       := 0        ; resource id currently shown as the main tray icon
 TRAY_CB_MSG         := 0x85A1   ; callback message of the extra tray icons
 HoverTips           := Map()    ; control hwnd -> hover tooltip text (AddTip)
+ListHotRow          := Map()    ; list hwnd -> row under the mouse (from 0), -1 = none (own hover drawing)
+CtrlColorCache      := Map()    ; control hwnd -> text color last set (SetCtrlColor)
+DdlItemCache        := Map()    ; drop-down hwnd -> its entries last set (SetDdlItems)
+LastTrackedRows     := []       ; the table rows as last shown (PopulateAppList updates only what changed)
+ListRowTips         := Map()    ; list hwnd -> Map(row index from 0 -> tooltip text), full names for long cells
+LvRowColors         := Map()    ; list hwnd -> Map(row index from 0 -> background color), e.g. apps with their override on
+DarkChecks          := Map()    ; checkbox hwnd -> {hot, dirty}: painted by the script (both themes, see DarkCheckProc)
+DarkChecksActive    := true     ; false while closing: the checkboxes are left to Windows
+PaintedDdls         := Map()    ; drop-down hwnd -> {hot}: painted by the script (see DdlProc)
 ThemedLVs           := Map()    ; ListView hwnd -> true while its rows are drawn by the script
 
 ; Which window decides an app's monitor (see FindWindow)
@@ -313,14 +335,19 @@ TitleBarKeyChoices  := [["Ctrl+Right-Click", "^RButton"], ["Alt+Right-Click", "!
                       , ["Shift+Right-Click", "+RButton"], ["Middle-Click", "MButton"]
                       , ["Ctrl+Middle-Click", "^MButton"]]
 ThemeKeys           := ["bg", "text", "textHead", "text2", "muted", "hint", "accent", "capture"
-                      , "ok", "warn", "err", "editBg", "listBg", "btnDefault", "btnDisBg", "btnDisFg", "btnDisBorder"
-                      , "hoverLift", "hoverBorder", "hdrBg", "hdrText", "hdrLine", "selBg", "selText", "gridLine", "sepLine", "frame", "frameTitle", "appTitle"]
-ThemeColors         := Map("light", Map(), "dark", Map())
+                      , "ok", "warn", "err", "statusOvr", "editBg", "listBg", "btnDefault", "btnDisBg", "btnDisFg", "btnDisBorder"
+                      , "hoverLift", "hoverBorder", "hdrBg", "hdrText", "hdrLine", "selBg", "selText", "selHoverLift", "selHoverText", "rowBg", "rowText", "rowHoverLift", "rowHoverText"
+                      , "ovrRowText", "ovrRowHoverLift", "ovrRowHoverText", "selOvrText", "selOvrStrip", "gridLine", "gridLineV", "sepLine", "frame", "frameTitle", "appTitle"
+                      , "checkBg", "checkBorder", "checkOnBg", "checkMark"
+                      , "btnText", "btnTextLight", "ddlBg", "ddlText", "ddlListBg"]
+ThemeColors         := Map()
 
 ; Hotkey Capture State (supports keyboard + mouse buttons)
 HotkeyBoxMeta       := Map()    ; hwnd -> {ctrl, kind, key, pendingHk}
 ActiveCaptureHwnd   := 0
 ActiveCaptureHook   := ""
+HkOwnerCache        := Map()    ; shortcut key -> who else uses it ("" = free), filled by HotkeyTakenBy()
+HkTakenShown        := Map()    ; shortcuts already reported as taken (not repeated at startup), saved in the INI
 
 ; Custom Button Color State
 BtnColorMap         := Map()    ; hwnd -> {ctrl, isDefault, bg, fg, border}
@@ -345,14 +372,13 @@ BtnRemoveApp         := ""
 ChkStartMin          := ""
 EdtPollMs            := ""
 ChkAutoStart         := ""
-ChkDarkTheme         := ""
 ReplaceDlg           := ""
 DevicesDlg           := ""
 DeviceAliases        := Map()   ; device key -> display name used by this app
 DeviceHideMap        := Map()   ; device key -> lists it is hidden from: o output, m monitor ovr, a app ovr, t temp ovr
 DeviceAliases.CaseSense := false, DeviceHideMap.CaseSense := false
 ChkFollowFocus       := ""
-ChkAppFollowFocus    := ""
+DdlAppFollowFocus    := ""
 DdlTitleBarKey       := ""
 
 ; Selected App Per-App Override Controls
@@ -360,6 +386,11 @@ LblSelAppName        := ""
 DdlAppOverrideDevice := ""
 ChkAppFollowMon      := ""
 DdlAppFixedDevice    := ""
+ChkAppSystemMic      := ""
+ChkAppHideTray       := ""
+ChkAppMicOn          := ""
+DdlAppMic            := ""
+AppMicDdlIds         := []
 AppFixedDeviceIds    := []
 AppOverrideDeviceIds := []
 BtnToggleAppOvr      := ""
@@ -411,6 +442,10 @@ MonHkControls        := Map()
 MonHkSetButtons      := Map()
 MonHkClrButtons      := Map()
 MonHkRstButtons      := Map()
+MonMicChecks         := Map()    ; monitor -> its Mic override checkbox
+MonMicDropdowns      := Map()    ; monitor -> its microphone list
+MonMicDropdownIds    := Map()    ; monitor -> ids behind that list
+MonEnableChecks      := Map()    ; monitor -> its "Enabled" checkbox
 
 ; Global Override Settings & Conflict Guard Controls
 LblOvrAllHeader      := ""
@@ -469,6 +504,7 @@ OnMessage(0x0218, OnWmPowerBroadcast) ; WM_POWERBROADCAST (wake from sleep)
 OnMessage(0x004E, OnWmNotify)        ; WM_NOTIFY (NM_CUSTOMDRAW for the colored buttons)
 OnMessage(0x0200, OnWmMouseMove)     ; WM_MOUSEMOVE (colored button hover)
 OnMessage(0x02A3, OnWmMouseLeave)    ; WM_MOUSELEAVE (colored button hover clear)
+OnMessage(0x0111, OnDdlCommand)      ; WM_COMMAND (painted drop-downs: repaint after a choice)
 
 SetupTrayMenu()
 ; The main window is built lazily by ShowMainGui() the first time it is opened.
@@ -478,13 +514,15 @@ ApplyTitleBarHotkey()
 OnMessage(TRAY_CB_MSG, OnExtraTrayIcon)
 OnMessage(DllCall("RegisterWindowMessageW", "Str", "TaskbarCreated", "UInt"), OnTaskbarCreated)
 OnExit(RemoveExtraTrayIcons)
+OnExit(UnhookDarkChecks)             ; before the windows are destroyed
 UpdateTrayIndicators()
 InstallWinEventHooks()
 ApplyPollTimer()
 ;SetTimer(RefreshTrackedStatusOnly, 1000)
 SetTimer(FinishStartupPhase, -1500)
+SetTimer(StartupHotkeyCheck, HasStartupArg() ? -25000 : -5000)   ; other apps register their shortcuts first
 
-if !StartMinimized && !HasStartupArg() {
+if ShowWindowOnce || (!StartMinimized && !HasStartupArg()) {
     ShowMainGui()
 } else {
     Tip("Screen Audio Router running in tray")
