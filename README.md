@@ -6,7 +6,7 @@ Drag Spotify to your TV and its music plays on the TV. Drag it back to your desk
 
 Screen Audio Router is a small Windows tray app written in [AutoHotkey v2](https://www.autohotkey.com/). It needs no driver and no virtual audio cable. It uses the same per-app output and input settings you find in Windows *Settings → Sound → Volume mixer*, and changes them automatically.
 
-![Screen Audio Router main window](doc/main-window-dark-1.6.0.png)
+![Screen Audio Router main window](doc/main-window-dark.png)
 
 ---
 
@@ -62,6 +62,7 @@ Screen Audio Router is a small Windows tray app written in [AutoHotkey v2](https
 - **Shortcut conflict check.** When you set a hotkey, it tells you if Windows, another program or another AutoHotkey script already uses it.
 - **Tray icon.** It shows the routing state (all on, partly off, off), and extra icons show active overrides. Each app can hide its own icon.
 - **Reset buttons.** End and reset every override in one click, or return the whole app to its first-start settings (with a backup).
+- **Update notification.** Once a day it asks GitHub whether a newer version was released and tells you, with **Download**, **Skip this version** and **Later**. Nothing is downloaded or installed by itself.
 - **Comfort features:** a dark window, tooltips on every option, start with Windows, start in the tray, remembers its window position.
 - **No helper tools needed.** It talks to Windows directly. NirSoft SoundVolumeView is only an optional fallback (see [Native audio](#native-audio-and-soundvolumeview)).
 
@@ -120,7 +121,7 @@ Ending an override never sends an app back to an "old" device. The app always re
 
 No installer is needed and nothing is written outside that folder, except the "Start with Windows" entry if you turn it on.
 
-**Updating:** replace the exe with the new one. Your settings are kept, and the first start of a new version makes a backup of them, named after the version you had before (`ScreenAudioRouter.ini.<old version>.bak`).
+**Updating:** Screen Audio Router tells you when a new version is out (see [Update notification](#update-notification)). Replace the exe with the new one. Your settings are kept, and the first start of a new version makes a backup of them, named after the version you had before (`ScreenAudioRouter.ini.<old version>.bak`).
 
 ### Option 2: the script
 
@@ -156,7 +157,7 @@ No installer is needed and nothing is written outside that folder, except the "S
 | **Global Override Settings & Conflict Guard** | The devices used by the All-Apps and All-Monitors overrides, the conflict guard, and the **Reset Overrides**, **Reset Win Mixer** and **Reset All…** buttons. |
 | **Global Monitor Rules & Overrides** | One block per monitor: **Enabled**, **Output**, override device (**Ovrd**) with its on/off button, **Mic** override and a hotkey. |
 | **Global Hotkeys & Quick Actions** | The global hotkeys (click a box, then press the keys), plus buttons for the same actions. |
-| **Routing Controls & Options** | Turn routing off (all, monitors only or apps only), title-bar menu, tracking, notifications and startup. |
+| **Routing Controls & Options** | Turn routing off (all, monitors only or apps only), title-bar menu, tracking, notifications, startup and the update check. |
 | **Status bar** | What is active right now, and the **Apply** and **Close** buttons. **Apply** is greyed out when there is nothing to apply. |
 
 Hover over any option to see a tooltip that explains it.
@@ -203,7 +204,7 @@ Browsers and some other apps have one sound for all their windows. Screen Audio 
 
 ### Title-bar menu
 
-![Title-bar menu](doc/title-bar-menu-1.6.0.png)
+![Title-bar menu](doc/title-bar-menu.png)
 
 Ctrl+Right-Click (or the combination you chose) on a window's title bar:
 
@@ -227,7 +228,8 @@ Turn on **All apps** next to the title-bar menu setting to get the menu on every
   - turn monitor overrides and the All-Monitors override on or off;
   - end active overrides, one by one or all at once;
   - **Replace Device…**;
-  - **Settings ▸** export, import, open the settings folder, reset overrides, reset all settings;
+  - **Update available ▸** (only when there is one) open the download page, or skip that version;
+  - **Settings ▸** export, import, open the settings folder, check for updates now, reset overrides, reset all settings;
   - **Beta ▸** native audio and the debug log;
   - **Start with Windows**.
 
@@ -307,6 +309,13 @@ To change a hotkey, click its box and press the new keys. Mouse buttons work too
 - **Move to another PC:** use **Settings → Export settings…** and **Import settings…** in the tray menu.
 - **Start with Windows:** adds an entry under `HKCU\…\Run`. If you move the exe, untick the option and tick it again.
 
+### Update notification
+
+About a minute after it starts, and then once a day, Screen Audio Router asks GitHub for the version number of the latest release. When it is newer, a notification appears at the bottom right with **Download** (opens the release page), **Skip this version** and **Later**. It stays until you click a button, or for a minute (longer while the mouse is over it). The tray menu then has an **Update available** item, and the version under the window's title shows the new one too.
+
+- Only the version number is read. Nothing is downloaded or installed by itself, and nothing about you or your settings is sent. GitHub sees your IP address, as when you open the page in a browser.
+- Untick **Check for updates** in *Routing Controls & Options* to turn it off. **Settings → Check for updates now** in the tray menu checks at once, and also shows a version you skipped.
+
 ---
 
 ## Customizing colors
@@ -333,7 +342,8 @@ Screen Audio Router\
 │  ├─ Tray.ahk             tray menu and icons, title-bar menu, notifications
 │  ├─ Theme.ahk            drawing of buttons, tables, checkboxes, drop-down lists and frames
 │  ├─ Hotkeys.ahk          hotkeys, the capture boxes and the shortcut conflict check
-│  └─ Settings.ahk         INI, backups and resets, debug log, single instance, autostart
+│  ├─ Settings.ahk         INI, backups and resets, debug log, single instance, autostart
+│  └─ Update.ahk           update check and notification
 └─ res\                    the 9 icons and sor-icons.dll
 ```
 
