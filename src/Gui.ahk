@@ -9,7 +9,7 @@
 ; ------------------------------ MAIN GUI ------------------------------------
 BuildMainGui() {
     global MainGui, BtnToggleRouting, AppLV, StatusLV, BtnRemoveApp, ChkStartMin, EdtPollMs, EdtToastSec
-    global ChkAutoStart, ChkFollowFocus, DdlAppFollowFocus, DdlTitleBarKey
+    global ChkAutoStart, ChkUpdateCheck, LblVersion, ChkFollowFocus, DdlAppFollowFocus, DdlTitleBarKey
     global ChkAppFollowMon, DdlAppFixedDevice, ChkAppSystemMic, ChkAppMicOn, DdlAppMic, ChkAppHideTray
     global MonMicChecks, MonMicDropdowns, MonMicDropdownIds, MonEnableChecks
     global LblSelAppName, DdlAppOverrideDevice, BtnToggleAppOvr, BtnResetAppOvr
@@ -78,9 +78,15 @@ BuildMainGui() {
     ttl := MainGui.AddText("x16 y" (TitleSize > 11 ? 8 : 12), "Screen Audio Router")
     ttl.GetPos(&ttlX, &ttlY, &ttlW, &ttlH)
     MainGui.SetFont("s9 Norm c" Th("muted"), "Segoe UI")
-    ver := MainGui.AddText("x" (ttlX + ttlW + 6) " y" ttlY, "v" APP_VERSION)
+    ver := MainGui.AddText("x" (ttlX + ttlW + 6) " y" ttlY " w300 +0x100", "v" APP_VERSION)   ; 0x100: clickable
     ver.GetPos(, , , &verH)
     ver.Move(, ttlY + ttlH - verH - 1)                 ; on the title's baseline
+    LblVersion := ver
+    if UpdateShown() {                                 ; a newer version is out
+        ver.Text := "v" APP_VERSION "   ·   v" UpdateLatest " available"
+        SetCtrlColor(ver, Th("accent"))
+    }
+    ver.OnEvent("Click", (*) => UpdateShown() ? OpenUpdatePage() : "")
     MainGui.SetFont("s9 Norm c" Th("text2"), "Segoe UI")
     MainGui.AddText("x16 y" Max(34, ttlY + ttlH + 1) " w566", "Checked apps follow their screen's Output, or switch instantly via Per-App, Monitor, or Global Overrides.")
 
@@ -446,7 +452,7 @@ BuildMainGui() {
         , "A menu on a window's title bar for adding apps, choosing their override device and`npicking which window an app's audio follows.")
     AddTip(MainGui.AddText("x" rx " y" (r3 + 2) " w96 +0x100", "Tracking :")
         , "How the script decides which monitor an app is on.")
-    AddTip(MainGui.AddText("x" rx " y" (r4 + 2) " w96 +0x100", "Startup && look :")
+    AddTip(MainGui.AddText("x" rx " y" (r4 + 2) " w96 +0x100", "Startup :")
         , "How the app starts and how it looks.")
 
     MainGui.SetFont("s9 Norm c" Th("text"), "Segoe UI")
@@ -514,6 +520,13 @@ BuildMainGui() {
     ChkAutoStart.Value := IsAutoStartEnabled() ? 1 : 0
     ChkAutoStart.OnEvent("Click", OnAutoStartChanged)
     AddTip(ChkAutoStart, "Start Screen Audio Router when you sign in to Windows.")
+
+    ChkUpdateCheck := MainGui.AddCheckbox("x" cC " y" r4 " w134 h20", "Check for updates")
+    ChkUpdateCheck.Value := UpdateCheck ? 1 : 0
+    ChkUpdateCheck.OnEvent("Click", OnUpdateCheckChanged)
+    AddTip(ChkUpdateCheck, "Once a day, ask GitHub whether a newer version was released, and tell you.`n"
+        . "Only the version number is read; nothing is downloaded or installed.`n"
+        . "GitHub sees your IP address, as when you open the page in a browser.")
 
     ; Status line
     MainGui.SetFont("s8 Bold c" Th("ok"), "Segoe UI")

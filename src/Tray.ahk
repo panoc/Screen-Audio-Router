@@ -483,6 +483,13 @@ FormatAppDisplayName(exe) {
 ; ------------------------------ TRAY MENU -----------------------------------
 SetupTrayMenu() {
     A_TrayMenu.Delete()
+    if UpdateShown() {
+        updSub := Menu()
+        updSub.Add("Open download page", OpenUpdatePage)
+        updSub.Add("Skip this version", SkipUpdateVersion)
+        A_TrayMenu.Add("Update available : " UpdateLatest, updSub)
+        A_TrayMenu.Add()
+    }
     A_TrayMenu.Add("Open Screen Audio Router", ShowMainGui)
 
     itemRouting := "Routing Active"
@@ -587,6 +594,7 @@ SetupTrayMenu() {
     setSub.Add("Export settings...", ExportSettings)
     setSub.Add("Import settings...", ImportSettings)
     setSub.Add("Open settings folder", (*) => Run('explorer.exe "' A_ScriptDir '"'))
+    setSub.Add("Check for updates now", CheckForUpdateNow)
     setSub.Add()
     setSub.Add("Reset overrides to defaults...", ResetOverridesToDefaults)
     setSub.Add("Reset all settings...", ResetAllSettings)

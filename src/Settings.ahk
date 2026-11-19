@@ -366,7 +366,7 @@ LoadConfig() {
     global MainWinX, MainWinY, ToastSec, DeviceWarnings, WarningSound, NativeAudio, DebugLog
     global DisableAllRouting, DisableMonitorRouting, DisableAppRouting
     global HkOverrideFocused, HkOverrideAllMons, HkOverrideAll, HkReapply
-    global MicsFollowOutput, ShowWindowOnce
+    global MicsFollowOutput, ShowWindowOnce, UpdateCheck, UpdateSkip
 
     pollRaw := IniRead(IniFile, "Settings", "PollMs", "500")
     PollMs  := IsInteger(pollRaw) ? Max(150, Min(Integer(pollRaw), 10000)) : 500
@@ -374,6 +374,8 @@ LoadConfig() {
     fbRaw := IniRead(IniFile, "Settings", "FallbackPollMs", "2000")
     FallbackPollMs := IsInteger(fbRaw) ? Max(500, Min(Integer(fbRaw), 10000)) : 2000
     StartMinimized            := (IniRead(IniFile, "Settings", "StartMinimized", "1") = "1")
+    UpdateCheck               := (IniRead(IniFile, "Settings", "UpdateCheck", "1") = "1")
+    UpdateSkip                := IniRead(IniFile, "Settings", "UpdateSkip", "")
     AvoidConflicts            := (IniRead(IniFile, "Settings", "AvoidConflicts", "1") = "1")
     EnableTitleBarMenu        := (IniRead(IniFile, "Settings", "EnableTitleBarMenu", "1") = "1")
     EnableAllAppsTitleBarMenu := (IniRead(IniFile, "Settings", "EnableAllAppsTitleBarMenu", "1") = "1")
@@ -616,6 +618,9 @@ WriteIniNow() {
     IniKv(L, "UseWinEvents", UseWinEvents ? "1" : "0")
     IniKv(L, "FallbackPollMs", FallbackPollMs)
     IniKv(L, "StartMinimized", StartMinimized ? "1" : "0")
+    IniKv(L, "UpdateCheck", UpdateCheck ? "1" : "0")
+    if UpdateSkip != ""
+        IniKv(L, "UpdateSkip", UpdateSkip)
     IniKv(L, "AvoidConflicts", AvoidConflicts ? "1" : "0")
     IniKv(L, "EnableTitleBarMenu", EnableTitleBarMenu ? "1" : "0")
     IniKv(L, "EnableAllAppsTitleBarMenu", EnableAllAppsTitleBarMenu ? "1" : "0")
