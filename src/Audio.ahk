@@ -141,6 +141,97 @@ NativeEnumDevices(flow := 0) {
     return devs
 }
 
+; The sound sessions of tracked apps, playback (flow 0) or recording (flow 1), and on which
+; device: Map(app -> Map(endpoint id -> true while playing / recording now, false while
+; paused)). pidApp: process id -> tracked app. Throws on failure.
+AudioSessions(flow, pidApp) {
+    static enum := ""
+    static IID_MGR2 := GuidBuf("{77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F}")
+    if !IsObject(enum)
+        enum := ComObject("{BCDE0395-E52F-467C-8E3D-C4579291692E}", "{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+    out := Map()
+    out.CaseSense := false
+    pColl := 0
+    ComCall(3, enum, "Int", flow, "UInt", 1, "Ptr*", &pColl)          ; EnumAudioEndpoints(flow, ACTIVE)
+    coll := ComValue(13, pColl)
+    cnt := 0
+    ComCall(3, coll, "UInt*", &cnt)
+    Loop cnt {
+        try {
+            pDev := 0
+            ComCall(4, coll, "UInt", A_Index - 1, "Ptr*", &pDev)
+            dev := ComValue(13, pDev)
+            pId := 0
+            ComCall(5, dev, "Ptr*", &pId)                               ; GetId
+            eid := StrGet(pId, "UTF-16")
+            DllCall("ole32\CoTaskMemFree", "Ptr", pId)
+            pMgr := 0
+            ComCall(3, dev, "Ptr", IID_MGR2, "UInt", 23, "Ptr", 0, "Ptr*", &pMgr)   ; Activate(IAudioSessionManager2)
+            mgr := ComValue(13, pMgr)
+            pSe := 0
+            ComCall(5, mgr, "Ptr*", &pSe)                               ; GetSessionEnumerator
+            se := ComValue(13, pSe)
+            n := 0
+            ComCall(3, se, "Int*", &n)                                  ; GetCount
+            Loop n {
+                try {
+                    pCtl := 0
+                    ComCall(4, se, "Int", A_Index - 1, "Ptr*", &pCtl)   ; GetSession
+                    ctl := ComValue(13, pCtl)
+                    st := 0
+                    ComCall(3, ctl, "Int*", &st)                        ; GetState: 0 inactive, 1 active, 2 expired
+                    if st = 2
+                        continue
+                    ctl2 := ComObjQuery(ctl, "{bfb7ff88-7239-4fc9-8fa2-07c950be9c6d}")   ; IAudioSessionControl2
+                    pid := 0
+                    ComCall(14, ctl2, "UInt*", &pid)                    ; GetProcessId
+                    app := pidApp.Get(pid, "")
+                    if app = "" && pid {                                ; a helper process started after the last scan
+                        try {
+                            nm := ProcessGetName(pid)
+                            if Apps.Get(nm, false)
+                                app := nm
+                        }
+                    }
+                    if app = ""
+                        continue
+                    if !out.Has(app)
+                        out[app] := Map()
+                    out[app][eid] := out[app].Get(eid, false) || st = 1
+                }
+            }
+        }
+    }
+    return out
+}
+
+; The Windows default device(s) for a flow, all roles (console, multimedia, communications):
+; Map(endpoint id -> true).
+DefaultEndpointIds(flow) {
+    static enum := ""
+    if !IsObject(enum)
+        enum := ComObject("{BCDE0395-E52F-467C-8E3D-C4579291692E}", "{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+    ids := Map()
+    for role in [0, 1, 2] {
+        try {
+            pDev := 0
+            ComCall(4, enum, "Int", flow, "Int", role, "Ptr*", &pDev)  ; GetDefaultAudioEndpoint
+            dev := ComValue(13, pDev)
+            pId := 0
+            ComCall(5, dev, "Ptr*", &pId)
+            ids[StrGet(pId, "UTF-16")] := true
+            DllCall("ole32\CoTaskMemFree", "Ptr", pId)
+        }
+    }
+    return ids
+}
+
+GuidBuf(str) {
+    g := Buffer(16, 0)
+    DllCall("ole32\CLSIDFromString", "WStr", str, "Ptr", g)
+    return g
+}
+
 PropStoreString(store, fmtid, pid) {
     key := Buffer(20, 0)
     DllCall("ole32\CLSIDFromString", "WStr", fmtid, "Ptr", key)
@@ -239,14 +330,16 @@ RefreshNativeDeviceList() {
 ; Routes an app's playback device and its microphone. mic: a recording device id or
 ; DEFAULT_CAPTURE_DEVICE, "" = leave the microphone alone, "auto" (resets) = the Windows
 ; default microphone while microphones are switched.
+; Returns false when Windows refused it (the caller tries again shortly).
 SetDevice(app, dev, mic := "auto") {
     if !ScanRunning.Has(app) && !AppRunning(app)
-        return
-    SetAppEndpoint(app, dev, 0)
+        return true
+    ok := SetAppEndpoint(app, dev, 0)
     if mic = "auto"                                ; resets: back to the Windows default microphone
         mic := MicRoutingActive() ? DEFAULT_CAPTURE_DEVICE : ""
     if mic != ""
-        SetAppEndpoint(app, mic, 1)
+        ok := SetAppEndpoint(app, mic, 1) && ok
+    return ok
 }
 
 ; One device for one app: flow 0 = playback, 1 = microphone. Native first, then SoundVolumeView.
@@ -265,15 +358,16 @@ SetAppEndpoint(app, dev, flow := 0) {
             eid := (IsObject(d) && d.HasOwnProp("eid")) ? d.eid : ""
         }
         if (isDefault || eid != "") && NativeSetAppDevice(ScanPids.Get(app, []), eid, flow)
-            return
+            return true
         LogLine("  native" what " routing not possible for " app (eid = "" && !isDefault ? " (device id unknown)" : "  " NativeNote))
     }
     if !FileExist(SVV) {
         LogLine("  " app what " not routed: SoundVolumeView.exe not found")
-        return
+        return false
     }
     LogLine("  " app what " routed with SoundVolumeView")
     Run(Format('"{1}" /SetAppDefault "{2}" all "{3}"', SVV, dev, app), , "Hide")
+    return true
 }
 
 ; ------------------------------ MICROPHONES ---------------------------------

@@ -1936,6 +1936,17 @@ PopulateAppList(force := false) {
         }
         rowTip := app "  —  " why
             . (tipOut != "" ? "`nOutput : " tipOut : "") . (tipIn != "" ? "`nInput : " tipIn : "")
+        ; heard on another device than its rules say, and re-routing did not help (SessionWatchTick)
+        if SessionStuck.Has(app "|0") {
+            outTxt := (SubStr(outTxt, 1, 2) = "⚠ " ? "" : "⚠ ") outTxt
+            rowTip .= "`n⚠ Plays on " EndpointName(SessionStuck[app "|0"], 0) " : the app picks that device itself."
+                . "`n   Set its output device to Default in its own settings."
+        }
+        if SessionStuck.Has(app "|1") {
+            inTxt := (SubStr(inTxt, 1, 2) = "⚠ " ? "" : "⚠ ") inTxt
+            rowTip .= "`n⚠ Records from " EndpointName(SessionStuck[app "|1"], 1) " : the app picks that microphone itself."
+                . "`n   Set its input device to Default in its own settings."
+        }
         ; the monitor number goes into the monitor statuses ("Monitor 2", "Mon 2 override")
         if mon {
             switch status {

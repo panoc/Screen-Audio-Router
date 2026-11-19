@@ -782,6 +782,123 @@ Tick() {
     }
 }
 
+; ------------------------------ HEARD ON THE WRONG DEVICE -------------------
+; Windows only takes an app's device for sure once the app makes sound: an app that was
+; closed during an override that ended meanwhile, and started later, still plays on the
+; override device. So once a second the script looks where each tracked app is actually
+; playing (and recording) and routes it again when that is not where its rules say.
+; Some apps choose their own device in their settings: after 2 tries that change nothing
+; the app is left alone and marked in the table, until it stops and plays again or its
+; target changes.
+SessionWatchTick() {
+    static busy := false
+    if busy || !NativeAudio || DisableAllRouting || !Apps.Count
+        return
+    busy := true
+    try SessionWatchBody()
+    busy := false
+    if !RouteFailed.Count
+        SetTimer(SessionWatchTick, 1000)           ; nothing pending: back to once a second
+}
+
+SessionWatchBody() {
+    RefreshScan()
+    pidApp := Map()
+    for app, pids in ScanPids {
+        if Apps.Get(app, false)
+            for pid in pids
+                pidApp[pid] := app
+    }
+    if !pidApp.Count {
+        RouteFailed.Clear()
+        return
+    }
+    changed := false
+    sessions := [AudioSessions(0, pidApp), AudioSessions(1, pidApp)]  ; app -> Map(endpoint id -> active?)
+
+    ; Routings Windows refused: done the moment the app has a sound session (even before it
+    ; is heard; at most every 0.75 s if Windows still refuses), and every 10 s anyway
+    for app, fl in RouteFailed.Clone() {
+        if !Apps.Get(app, false) || !ScanRunning.Has(app) {
+            RouteFailed.Delete(app)
+            continue
+        }
+        since := A_TickCount - fl.last
+        if ((sessions[1].Has(app) || sessions[2].Has(app)) && since >= 750) || since >= 10000
+            try RouteAppNow(app, true)
+    }
+
+    for flow in [0, 1] {
+        heard := Map()                                      ; only sessions playing / recording now
+        heard.CaseSense := false
+        for app, eids in sessions[flow + 1] {
+            for eid, active in eids
+                if active {
+                    if !heard.Has(app)
+                        heard[app] := Map()
+                    heard[app][eid] := true
+                }
+        }
+        defaults := DefaultEndpointIds(flow)
+        for app in Apps {
+            k := app "|" flow
+            want := ""
+            if !RouteFailed.Has(app) && IsObject(r := LastRouted.Get(app, "")) && Apps.Get(app, false)
+                want := flow ? (r.HasOwnProp("mic") ? r.mic : "") : r.dev
+            if want = "" || !heard.Has(app) {               ; not routed, mic left alone, or silent
+                MapDel(SessionFix, k)
+                if SessionStuck.Has(k)
+                    SessionStuck.Delete(k), changed := true
+                continue
+            }
+            wantIds := Map()
+            if want = DEFAULT_DEVICE || want = DEFAULT_CAPTURE_DEVICE
+                wantIds := defaults
+            else if IsObject(d := FindCachedDevice(ResolveDeviceId(want))) && d.HasOwnProp("eid")
+                wantIds[d.eid] := true
+            if !wantIds.Count
+                continue                                    ; device unknown / missing: nothing to compare
+            wrong := ""
+            for eid in heard[app]
+                if !wantIds.Has(eid)
+                    wrong := eid
+            if wrong != "" && A_TickCount - RoutedAt.Get(app, 0) < 1500
+                continue                                    ; just routed: its sound is still moving over
+            if wrong = "" {
+                MapDel(SessionFix, k)
+                if SessionStuck.Has(k)
+                    SessionStuck.Delete(k), changed := true
+                continue
+            }
+            sig := want "|" wrong
+            fx := SessionFix.Get(k, "")
+            if !IsObject(fx) || fx.sig != sig
+                fx := SessionFix[k] := {sig: sig, tries: 0, last: 0}
+            if fx.tries >= 2 {
+                if SessionStuck.Get(k, "") != wrong
+                    SessionStuck[k] := wrong, changed := true
+                continue
+            }
+            if A_TickCount - fx.last < 2000
+                continue
+            fx.tries++, fx.last := A_TickCount
+            LogLine(Format("Heard {1} {2} on {3}, should be {4}: routing again (try {5})", app
+                , flow ? "recording" : "playing", EndpointName(wrong, flow), want = DEFAULT_DEVICE || want = DEFAULT_CAPTURE_DEVICE ? "Windows default" : ShortDeviceName(want), fx.tries))
+            try RouteAppNow(app, true)
+        }
+    }
+    if changed
+        try PopulateAppList(false)
+}
+
+; Name of an endpoint id from the device lists ("" when unknown).
+EndpointName(eid, flow := 0) {
+    for d in (flow ? CachedMics : CachedDevices)
+        if d.HasOwnProp("eid") && d.eid = eid
+            return ShortDeviceName(d.id)
+    return "another device"
+}
+
 GetEffectiveDeviceForApp(app, mon) {
     return GetRoutingTarget(app, mon).dev
 }
@@ -847,7 +964,19 @@ RouteAppNow(app, force := false) {
     LogLine(Format("Route {1}  mon {2}  -> {3}{4}{5}", app, mon, ShortDeviceName(targetDev)
         , tgt.missing != "" ? "   (" ShortDeviceName(tgt.missing) " missing)" : ""
         , targetMic = "" ? "" : "   mic " MicDisplayName(targetMic) (micT.missing != "" ? " (" ShortDeviceName(micT.missing) " missing)" : "")))
-    SetDevice(app, targetDev, targetMic)
+    if !SetDevice(app, targetDev, targetMic) {
+        ; Windows refuses an app until it has started its sound (0x80070057): the routing
+        ; stays pending and is done as soon as the app's sound appears (SessionWatchBody)
+        fl := RouteFailed.Get(app, "")
+        RouteFailed[app] := {tries: IsObject(fl) ? fl.tries + 1 : 1, last: A_TickCount}
+        SetTimer(SessionWatchTick, 250)            ; watch closely until it is done
+        return
+    }
+    RoutedAt[app] := A_TickCount
+    if RouteFailed.Has(app) {
+        RouteFailed.Delete(app)
+        LogLine("  " app " routed (its sound has started)")
+    }
     if targetMic != "" && targetMic != DEFAULT_CAPTURE_DEVICE && AppSystemMic.Get(app, false)
         && (force || targetMic != prevMic)
         SetSystemDefaultMic(targetMic)
