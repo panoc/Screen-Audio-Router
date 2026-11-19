@@ -22,7 +22,7 @@
 ; ============================================================================
 ;@Ahk2Exe-SetName          Screen Audio Router
 ;@Ahk2Exe-SetDescription   Screen Audio Router
-;@Ahk2Exe-SetVersion       1.6.0
+;@Ahk2Exe-SetVersion       1.6.1
 ;@Ahk2Exe-SetCopyright (C) 2026 panoc - GPLv3 - github.com/panoc
 ;@Ahk2Exe-SetOrigFilename  Screen Audio Router.exe
 #Requires AutoHotkey v2.0
@@ -32,7 +32,7 @@ CoordMode("Mouse", "Screen")
 CoordMode("Menu", "Screen")
 
 ; ------------------------------- CONFIG -------------------------------------
-APP_VERSION := "1.6.0"   ; keep equal to the SetVersion line at the top (-betaN = test build)
+APP_VERSION := "1.6.1"   ; keep equal to the SetVersion line at the top (-betaN = test build)
 SVV      := A_ScriptDir "\SoundVolumeView.exe"
 IniFile  := A_ScriptDir "\ScreenAudioRouter.ini"
 IconDll   := FileExist(A_ScriptDir "\res\sor-icons.dll") ? A_ScriptDir "\res\sor-icons.dll" : A_ScriptDir "\sor-icons.dll"   ; 101 normal, 102 partial, 103 off, 104-107 monitors 1-4, 108 all monitors, 109 app
@@ -228,8 +228,12 @@ Released                  := Map()    ; app.exe -> true (apps released from all-
 
 LastRouted                := Map()    ; app.exe -> "mon|deviceId" last applied
 LastSeen                  := Map()    ; app.exe -> last monitor its window was seen on
+SessionFix                := Map()    ; "app|flow" -> {sig, tries, last}: re-routing an app heard on the wrong device (SessionWatchTick)
+RouteFailed               := Map()    ; app.exe -> {tries, last}: Windows refused its routing (no sound yet), done when its sound starts
+RoutedAt                  := Map()    ; app.exe -> tick of its last routing that Windows accepted
+SessionStuck              := Map()    ; "app|flow" -> endpoint id the app keeps playing / recording on by itself
 
-for m in [AppHotkeys, RegAppHotkeys, Apps, AppOverrideRules, AppOverrideActive, Released, LastRouted, LastSeen]
+for m in [AppHotkeys, RegAppHotkeys, Apps, AppOverrideRules, AppOverrideActive, Released, LastRouted, LastSeen, SessionFix, SessionStuck, RouteFailed, RoutedAt]
     m.CaseSense := false
 
 AllMode               := false    ; true when Global All-Apps Override is ON
@@ -518,6 +522,7 @@ OnExit(UnhookDarkChecks)             ; before the windows are destroyed
 UpdateTrayIndicators()
 InstallWinEventHooks()
 ApplyPollTimer()
+SetTimer(SessionWatchTick, 1000)     ; where tracked apps are actually heard (see SessionWatchTick)
 ;SetTimer(RefreshTrackedStatusOnly, 1000)
 SetTimer(FinishStartupPhase, -1500)
 SetTimer(StartupHotkeyCheck, HasStartupArg() ? -25000 : -5000)   ; other apps register their shortcuts first
