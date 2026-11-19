@@ -22,7 +22,7 @@
 ; ============================================================================
 ;@Ahk2Exe-SetName          Screen Audio Router
 ;@Ahk2Exe-SetDescription   Screen Audio Router
-;@Ahk2Exe-SetVersion       1.6.1
+;@Ahk2Exe-SetVersion       1.6.2
 ;@Ahk2Exe-SetCopyright (C) 2026 panoc - GPLv3 - github.com/panoc
 ;@Ahk2Exe-SetOrigFilename  Screen Audio Router.exe
 #Requires AutoHotkey v2.0
@@ -32,7 +32,8 @@ CoordMode("Mouse", "Screen")
 CoordMode("Menu", "Screen")
 
 ; ------------------------------- CONFIG -------------------------------------
-APP_VERSION := "1.6.1"   ; keep equal to the SetVersion line at the top (-betaN = test build)
+APP_VERSION := "1.6.2"   ; keep equal to the SetVersion line at the top (-betaN = test build)
+UPDATE_REPO := "panoc/Screen-Audio-Router"   ; GitHub repository asked for the latest release
 SVV      := A_ScriptDir "\SoundVolumeView.exe"
 IniFile  := A_ScriptDir "\ScreenAudioRouter.ini"
 IconDll   := FileExist(A_ScriptDir "\res\sor-icons.dll") ? A_ScriptDir "\res\sor-icons.dll" : A_ScriptDir "\sor-icons.dll"   ; 101 normal, 102 partial, 103 off, 104-107 monitors 1-4, 108 all monitors, 109 app
@@ -307,6 +308,15 @@ EdtToastSec         := ""
 SavePending         := false    ; the INI has changes that have not been written yet
 SkipExitSave        := false    ; restarting after Import / Reset all: do not write the old settings back on exit
 ShowWindowOnce      := false    ; open the window once after a restart (Reset all)
+UpdateCheck         := true     ; look for a newer release on GitHub (src\Update.ahk)
+UpdateSkip          := ""       ; version the user chose to skip
+UpdateLatest        := ""       ; newer version found ("" = none)
+UpdateUrl           := ""       ; its release page
+UpdReq              := ""       ; the running check
+UpdStarted          := 0
+UpdManual           := false
+UpdateToastGui      := ""
+UpdateToastUntil    := 0
 
 ; Theme: the palette in use, filled from THEME at the top.
 ExtraIcons          := Map()    ; tray id -> {res, tip, kind, key} of the extra override icons shown now
@@ -376,6 +386,8 @@ BtnRemoveApp         := ""
 ChkStartMin          := ""
 EdtPollMs            := ""
 ChkAutoStart         := ""
+ChkUpdateCheck       := ""
+LblVersion           := ""
 ReplaceDlg           := ""
 DevicesDlg           := ""
 DeviceAliases        := Map()   ; device key -> display name used by this app
@@ -525,6 +537,7 @@ ApplyPollTimer()
 SetTimer(SessionWatchTick, 1000)     ; where tracked apps are actually heard (see SessionWatchTick)
 ;SetTimer(RefreshTrackedStatusOnly, 1000)
 SetTimer(FinishStartupPhase, -1500)
+StartUpdateChecks()
 SetTimer(StartupHotkeyCheck, HasStartupArg() ? -25000 : -5000)   ; other apps register their shortcuts first
 
 if ShowWindowOnce || (!StartMinimized && !HasStartupArg()) {
@@ -555,3 +568,4 @@ FinishStartupPhase() {
 #Include %A_ScriptDir%\src\Theme.ahk
 #Include %A_ScriptDir%\src\Hotkeys.ahk
 #Include %A_ScriptDir%\src\Settings.ahk
+#Include %A_ScriptDir%\src\Update.ahk
