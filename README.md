@@ -6,7 +6,7 @@ Drag Spotify to your TV and its music plays on the TV. Drag it back to your desk
 
 Screen Audio Router is a small Windows tray app written in [AutoHotkey v2](https://www.autohotkey.com/). It needs no driver and no virtual audio cable. It uses the same per-app output and input settings you find in Windows *Settings → Sound → Volume mixer*, and changes them automatically.
 
-![Screen Audio Router main window](doc/main-window-dark-1.6.0.png)
+![Screen Audio Router main window](doc/main-window-dark.png)
 
 ---
 
@@ -76,6 +76,7 @@ Windows lets every program have its own output device and its own input device. 
 3. **It picks a device.** It goes down the list below and uses the first rule that applies. If that device is unplugged, it moves on to the next rule.
 4. **It picks a microphone** that goes with it (see [Microphones](#microphones)).
 5. **It routes the app.** It tells Windows to send that app's audio to the chosen device and to record from the chosen microphone, and does nothing if the app is already there.
+6. **It checks where the app is heard.** Windows only accepts a device for an app once the app has started its sound. So an app that is still silent is routed the moment its sound starts, and once a second the script checks that every tracked app really plays (and records) where its rules say.
 
 ```mermaid
 flowchart TD
@@ -202,7 +203,7 @@ Browsers and some other apps have one sound for all their windows. Screen Audio 
 
 ### Title-bar menu
 
-![Title-bar menu](doc/title-bar-menu.png-1.6.0.png)
+![Title-bar menu](doc/title-bar-menu.png)
 
 Ctrl+Right-Click (or the combination you chose) on a window's title bar:
 
@@ -373,6 +374,8 @@ To have that fallback, download `SoundVolumeView.exe` and put it **next to the e
 - Make sure **Switch microphones** is ticked in the Devices window, and that the device it plays on has a paired microphone (with its box ticked) or a Mic override.
 - Set the app's own input device to *Default* in its settings (Discord: *Voice & Video → Input Device → Default*). An app with a fixed microphone of its own ignores Windows.
 - If it still uses the wrong one, tick **Win default mic** for it.
+
+**An app plays on its own device whatever the rules say.** The table marks its Output (or Input) with ⚠. The app chooses that device in its own settings: set its output (or input) device to *Default* there.
 
 **A browser plays on the wrong monitor.** Its sound follows one window. Use *Audio follows this window* in the title-bar menu, or set **Follow focus** to *On* for it.
 
