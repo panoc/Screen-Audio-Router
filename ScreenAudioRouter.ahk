@@ -22,7 +22,7 @@
 ; ============================================================================
 ;@Ahk2Exe-SetName          Screen Audio Router
 ;@Ahk2Exe-SetDescription   Screen Audio Router
-;@Ahk2Exe-SetVersion       1.6.2
+;@Ahk2Exe-SetVersion       1.6.3
 ;@Ahk2Exe-SetCopyright (C) 2026 panoc - GPLv3 - github.com/panoc
 ;@Ahk2Exe-SetOrigFilename  Screen Audio Router.exe
 #Requires AutoHotkey v2.0
@@ -32,7 +32,7 @@ CoordMode("Mouse", "Screen")
 CoordMode("Menu", "Screen")
 
 ; ------------------------------- CONFIG -------------------------------------
-APP_VERSION := "1.6.2"   ; keep equal to the SetVersion line at the top (-betaN = test build)
+APP_VERSION := "1.6.3"   ; keep equal to the SetVersion line at the top (-betaN = test build)
 UPDATE_REPO := "panoc/Screen-Audio-Router"   ; GitHub repository asked for the latest release
 SVV      := A_ScriptDir "\SoundVolumeView.exe"
 IniFile  := A_ScriptDir "\ScreenAudioRouter.ini"
@@ -218,6 +218,11 @@ MonitorRules              := Map()    ; monNum -> normal deviceId
 MonitorOverrideRules      := Map()    ; monNum -> per-monitor override deviceId
 MonitorOverrideActive     := Map()    ; monNum -> bool (true = per-monitor override active)
 PrevMonitorOverrideActive := Map()    ; monNum -> bool (snapshot)
+MonitorOrder              := []       ; monitor number (1-4) -> hardware id of that screen ("" = free); see UpdateMonitorMap
+Loop MAX_MONITORS
+    MonitorOrder.Push("")
+MonWin                    := Map()    ; monitor number -> Windows' own monitor number, for connected screens
+WinMon                    := Map()    ; Windows' monitor number -> monitor number in this app
 MonitorOff                := Map()    ; monNum -> true: monitor unticked ("Enabled" off); its Output / Ovrd / Mic are kept
 
 AllMonitorsMode           := false    ; true when Global All-Monitors Override is ON

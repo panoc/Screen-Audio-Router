@@ -9,14 +9,16 @@
 ; ------------------------------ HOTKEY MANAGEMENT & CAPTURE -----------------
 InitAllHotkeys() {
     global HkOverrideFocused, HkOverrideAllMons, HkOverrideAll, HkReapply, DetectedMonCount
-    DetectedMonCount := Min(Max(MonitorGetCount(), 1), MAX_MONITORS)
+    UpdateMonitorMap()
 
     RegisterSingleHotkey("focused", HkOverrideFocused, true)
     RegisterSingleHotkey("allmons", HkOverrideAllMons, true)
     RegisterSingleHotkey("all", HkOverrideAll, true)
     RegisterSingleHotkey("reapply", HkReapply, true)
 
-    Loop DetectedMonCount {
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
         mIdx := A_Index
         if !IsMonitorDisabled(mIdx) {
             hk := MonHotkeys.Get(mIdx, "")
@@ -836,6 +838,6 @@ StartupHotkeyCheck() {
     for l in lines
         msg .= "`n" l
     msg .= "`nScreen Audio Router is using " (lines.Length = 1 ? "it" : "them") ". You can change it in the window."
-    ShowOsdToast(msg, MonitorGetPrimary(), "warn")
+    ShowOsdToast(msg, PrimaryMon(), "warn")
     LogLine("Startup: " StrReplace(msg, "`n", " / "))
 }

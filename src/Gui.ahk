@@ -37,7 +37,7 @@ BuildMainGui() {
     HoveredBtnHwnd := 0
 
     MonCount := MAX_MONITORS
-    DetectedMonCount := Min(Max(MonitorGetCount(), 1), MAX_MONITORS)
+    UpdateMonitorMap()
     BuiltMonSignature := GetMonitorLayoutSignature()
     monInfos := CollectMonitorInfos()
 
@@ -575,7 +575,9 @@ HasUnappliedGuiChanges() {
     if GetHotkeyBoxPending(HkCtrlReapply) != HkReapply
         return true
 
-    Loop DetectedMonCount {
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
         mIdx := A_Index
         if MonHkControls.Has(mIdx) && !IsMonitorDisabled(mIdx) && GetHotkeyBoxPending(MonHkControls[mIdx]) != MonHotkeys.Get(mIdx, "")
             return true
@@ -617,7 +619,9 @@ ApplyChangesFromGui(silent := false) {
             allOk &= RegisterSingleHotkey(item[1], pend, true)
     }
 
-    Loop DetectedMonCount {
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
         mIdx := A_Index
         if MonHkControls.Has(mIdx) && !IsMonitorDisabled(mIdx) {
             pend := GetHotkeyBoxPending(MonHkControls[mIdx])
@@ -787,8 +791,10 @@ CloseDetectWindow(*) {
     PurgeDeadControlMaps()
 }
 
+; The screens by their number in this app (1-4): resolution, position, ... connected: false
+; for a number whose screen is not connected.
 CollectMonitorInfos() {
-    cnt := Min(Max(MonitorGetCount(), 1), MAX_MONITORS)
+    UpdateMonitorMap()
     pri := MonitorGetPrimary()
     raw := []
 
@@ -796,8 +802,11 @@ CollectMonitorInfos() {
     minCy := 999999, maxCy := -999999
     sumCx := 0, sumCy := 0
 
-    Loop cnt {
-        MonitorGet(A_Index, &l, &t, &r, &b)
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
+        slot := A_Index
+        MonitorGet(MonWin[slot], &l, &t, &r, &b)
         cx := (l + r) // 2
         cy := (t + b) // 2
         if cx < minCx
@@ -811,15 +820,16 @@ CollectMonitorInfos() {
         sumCx += cx
         sumCy += cy
         raw.Push({
-            idx: A_Index,
+            idx: slot,
             l: l, t: t, r: r, b: b,
             cx: cx, cy: cy,
             res: (r - l) "x" (b - t),
-            isPrimary: (A_Index = pri),
+            isPrimary: (MonWin[slot] = pri),
             posTag: "",
             connected: true
         })
     }
+    cnt := raw.Length
 
     if cnt > 1 {
         avgCx := sumCx / cnt
@@ -859,19 +869,32 @@ CollectMonitorInfos() {
         }
     }
 
-    while raw.Length < MAX_MONITORS {
-        raw.Push({
-            idx: raw.Length + 1,
-            l: 0, t: 0, r: 0, b: 0,
-            cx: 0, cy: 0,
-            res: "Not Detected",
-            isPrimary: false,
-            posTag: "",
-            connected: false
-        })
+    out := []
+    Loop MAX_MONITORS {
+        slot := A_Index, found := ""
+        for m in raw
+            if m.idx = slot
+                found := m
+        if !IsObject(found)
+            found := {idx: slot, l: 0, t: 0, r: 0, b: 0, cx: 0, cy: 0, res: "Not Detected"
+                    , isPrimary: false, posTag: "", connected: false}
+        out.Push(found)
     }
+    return out
+}
 
-    return raw
+; Connected screens for the Devices window: hardware id -> {text, l, t}.
+MonitorDescriptions() {
+    out := Map()
+    for info in CollectMonitorInfos() {
+        if !info.connected
+            continue
+        k := MonitorOrder[info.idx]
+        nm := MonitorFriendlyName(k)
+        out[k] := {text: (nm != "" ? nm : MonitorModel(k)) "     " info.res (info.posTag != "" ? "  [" info.posTag "]" : "")
+            . (info.isPrimary ? "  [Primary]" : ""), l: info.l, t: info.t}
+    }
+    return out
 }
 
 ShowMainGui(*) {
@@ -1256,7 +1279,7 @@ GetProcessExeName(pid) {
 PopulateMonitorDropdowns() {
     Loop MAX_MONITORS {
         mIdx := A_Index
-        isConn := (mIdx <= DetectedMonCount)
+        isConn := MonConnected(mIdx)
         normId := MonitorRules.Get(mIdx, DEFAULT_DEVICE)
         isSubEnabled := isConn && !IsMonitorDisabled(mIdx)
 
@@ -1629,7 +1652,7 @@ BuildDeviceDropdownItems(targetId, excludeId := "", sameWarnId := "", includeDis
 }
 
 OnGlobalRuleChanged(mIdx, ctrl, *) {
-    if mIdx > DetectedMonCount
+    if !MonConnected(mIdx)
         return
     idx := ctrl.Value
     ids := MonDropdownIds[mIdx]
@@ -1656,7 +1679,7 @@ OnGlobalRuleChanged(mIdx, ctrl, *) {
 ; "Enabled" ticked / unticked. Off: the monitor's override ends and its hotkey is switched off;
 ; its Output, Ovrd and Mic settings stay for when it is ticked again.
 OnMonitorEnabledChanged(mIdx, ctrl, *) {
-    if mIdx > DetectedMonCount
+    if !MonConnected(mIdx)
         return
     if ctrl.Value {
         MapDel(MonitorOff, mIdx)
@@ -1680,7 +1703,7 @@ OnMonitorEnabledChanged(mIdx, ctrl, *) {
 }
 
 OnMonitorOverrideDeviceChanged(mIdx, ctrl, *) {
-    if mIdx > DetectedMonCount
+    if !MonConnected(mIdx)
         return
     idx := ctrl.Value
     ids := MonOvrDropdownIds[mIdx]
@@ -1909,13 +1932,13 @@ PopulateAppList(force := false) {
             status := "📌 Fixed", appLevel := true
         } else if !running {
             status := "💤 Not running"
-        } else if mon && mon <= DetectedMonCount && IsMonitorDisabled(mon) {
+        } else if mon && MonConnected(mon) && IsMonitorDisabled(mon) {
             status := "⏸ Mon disabled"
         } else if !DisableMonitorRouting && mon && AllMonitorsMode {
             status := "🌐 All-Mons"
-        } else if !DisableMonitorRouting && mon && mon <= DetectedMonCount && MonitorOverrideActive.Get(mon, false) {
+        } else if !DisableMonitorRouting && mon && MonConnected(mon) && MonitorOverrideActive.Get(mon, false) {
             status := "⚡ Mon override"
-        } else if !DisableMonitorRouting && mon && mon <= DetectedMonCount && MonitorRules.Has(mon) {
+        } else if !DisableMonitorRouting && mon && MonConnected(mon) && MonitorRules.Has(mon) {
             status := "🟢 Monitor"
         } else {
             status := "⚪ Default"
@@ -2282,7 +2305,9 @@ OnAppFollowFocusChanged(*) {
 
 ; Override on for at least one detected monitor that is not set to Disabled.
 AnyEffectiveMonitorOverride() {
-    Loop DetectedMonCount {
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
         if MonitorOverrideActive.Get(A_Index, false) && !IsMonitorDisabled(A_Index)
             return true
     }
@@ -2299,7 +2324,9 @@ AnyAppOverrideActive() {
 }
 
 AnyMonitorOverrideActive() {
-    Loop DetectedMonCount {
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
         if MonitorOverrideActive.Get(A_Index, false)
             return true
     }
@@ -2311,7 +2338,9 @@ UpdateOverrideBanner() {
     if !IsObject(DdlAllAppsDevice)
         return
     activeMons := []
-    Loop DetectedMonCount {
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
         if MonitorOverrideActive.Get(A_Index, false)
             activeMons.Push("Mon " A_Index)
     }
@@ -2355,7 +2384,7 @@ UpdateOverrideBanner() {
     }
 
     Loop MAX_MONITORS {
-        isConn := (A_Index <= DetectedMonCount) && !IsMonitorDisabled(A_Index)
+        isConn := MonConnected(A_Index) && !IsMonitorDisabled(A_Index)
         if MonOvrButtons.Has(A_Index) {
             isMonOvrOn := isConn && MonitorOverrideActive.Get(A_Index, false)
             SetCtrlText(MonOvrButtons[A_Index], isMonOvrOn ? "Ovrd : ON" : "Ovrd : OFF")
@@ -2583,6 +2612,38 @@ ShowDevicesDialog(*) {
         . "Nothing paired and no Override Mic = microphones are left alone too.")
     y += 26
 
+    ; monitor numbers in this app: moved with ▲ ▼, applied on Save
+    y += 10
+    dlg.SetFont("s9 Bold c" Th("text2"), "Segoe UI")
+    AddTip(dlg.AddText("x16 y" y " w300 +0x100", "Monitor numbers")
+        , "Which screen is Monitor 1, 2, 3 and 4 in this app (window, table, tray icons, hotkeys).`n"
+        . "Each monitor's settings move with its screen.")
+    dlg.AddText("x100 y" y " w400", "Screen")
+    dlg.SetFont("s9 Norm c" Th("text"), "Segoe UI")
+    y += 24
+    monOrder := MonitorOrder.Clone()               ; pending numbers (hardware ids), applied on Save
+    monDesc := MonitorDescriptions()
+    monRows := []
+    Loop MAX_MONITORS {
+        i := A_Index
+        dlg.AddText("x16 y" (y + 3) " w80", "Monitor " i)
+        mt := dlg.AddText("x100 y" (y + 3) " w600 h18 +0x4000", "")
+        bUp := AddColoredButton(dlg, "x712 y" (y - 2) " w30 h24", "▲", ColorDefault)
+        bDn := AddColoredButton(dlg, "x746 y" (y - 2) " w30 h24", "▼", ColorDefault)
+        bUp.OnEvent("Click", moveMon.Bind(i, -1))
+        bDn.OnEvent("Click", moveMon.Bind(i, 1))
+        monRows.Push({txt: mt, up: bUp, dn: bDn})
+        y += 28
+    }
+    bL2R := AddColoredButton(dlg, "x100 y" y " w120 h26", "Left to right", ColorDefault)
+    bIdent := AddColoredButton(dlg, "x226 y" y " w100 h26", "Identify", ColorDefault)
+    bL2R.OnEvent("Click", sortLeftToRight)
+    bIdent.OnEvent("Click", (*) => ShowMonitorNumbersFor(monOrder))
+    AddTip(bL2R, "Number the connected screens from left to right.")
+    AddTip(bIdent, "Show these numbers on the screens.")
+    showMonRows()
+    y += 34
+
     dlg.SetFont("s8 c" Th("muted"), "Segoe UI")
     dlg.AddText("x16 y" (y + 6) " w" (W - 32) " h72"
         , "Display name : your own short name for a device, used by this app only. Empty = the Windows name.`n"
@@ -2598,6 +2659,45 @@ ShowDevicesDialog(*) {
     bCancel := AddColoredButton(dlg, "x" (W - 132) " y" y " w110 h28", "Cancel", ColorDefault)
     AddTip(bRefresh, "Read the device list again (unsaved changes here are discarded).")
     AddTip(bReplace, "Swap one device for another in every output and override at once,`ne.g. after a driver update renamed it or it moved to another port.")
+
+    showMonRows() {
+        for i, r in monRows {
+            k := monOrder[i]
+            SetCtrlText(r.txt, k = "" ? "(free)" : monDesc.Has(k) ? monDesc[k].text : "Not connected     " (MonitorFriendlyName(k) != "" ? MonitorFriendlyName(k) : MonitorModel(k)))
+            SetCtrlColor(r.txt, monDesc.Has(k) ? Th("text") : Th("muted"))
+            SetCtrlEnabled(r.up, i > 1)
+            SetCtrlEnabled(r.dn, i < MAX_MONITORS)
+        }
+    }
+    moveMon(i, d, *) {
+        j := i + d
+        if j < 1 || j > MAX_MONITORS
+            return
+        tmp := monOrder[i], monOrder[i] := monOrder[j], monOrder[j] := tmp
+        showMonRows()
+    }
+    ; connected screens left to right (then top to bottom), then the others as they were
+    sortLeftToRight(*) {
+        conn := [], rest := []
+        for k in monOrder {
+            if k != "" && monDesc.Has(k)
+                conn.Push(k)
+            else
+                rest.Push(k)
+        }
+        Loop conn.Length - 1 {                      ; few entries: simple sort
+            Loop conn.Length - 1 {
+                a := monDesc[conn[A_Index]], b := monDesc[conn[A_Index + 1]]
+                if a.l > b.l || (a.l = b.l && a.t > b.t)
+                    tmp := conn[A_Index], conn[A_Index] := conn[A_Index + 1], conn[A_Index + 1] := tmp
+            }
+        }
+        for i, k in conn
+            monOrder[i] := k
+        for i, k in rest
+            monOrder[conn.Length + i] := k
+        showMonRows()
+    }
 
     ; "Pair" box: unticked = paused, its microphone list greyed out (kept)
     pairBoxClicked(ddCtrl, box, *) {
@@ -2648,6 +2748,7 @@ ShowDevicesDialog(*) {
         for c in micCtrls
             saveAlias(c.id, c.edit)
         MicsFollowOutput := chkMics.Value ? true : false
+        newMonOrder := monOrder.Clone()
         ApplyDeviceAliases(CachedDevices)
         ApplyDeviceAliases(CachedMics)
         SaveConfig()
@@ -2664,7 +2765,10 @@ ShowDevicesDialog(*) {
                 PopulateAppList(true)
             }
         }
-        Tip("Device settings saved")
+        if ApplyMonitorOrder(newMonOrder)           ; after the window is gone: rebuilds the main window
+            Tip("Device settings saved, monitor numbers changed")
+        else
+            Tip("Device settings saved")
     }
     refresh(*) {
         global CachedDevices, DevicesStale

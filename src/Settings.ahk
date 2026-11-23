@@ -427,6 +427,14 @@ LoadConfig() {
         Apps[app] := (val != "0")
     }
 
+    Loop MAX_MONITORS                               ; which screen is Monitor 1-4 (hardware ids)
+        MonitorOrder[A_Index] := ""
+    for numStr, key in ReadSection("MonitorOrder") {
+        if IsInteger(numStr) && Integer(numStr) >= 1 && Integer(numStr) <= MAX_MONITORS && key != ""
+            MonitorOrder[Integer(numStr)] := key
+    }
+    UpdateMonitorMap()
+
     MonitorRules.Clear(), MonitorOff.Clear()
     for monStr, devId in ReadSection("MonitorRules") {
         if !IsInteger(monStr) || devId = "" || devId = DEFAULT_DEVICE
@@ -668,6 +676,11 @@ WriteIniNow() {
         IniKv(L, app, enabled ? "1" : "0")
     }
 
+    IniSection(L, "MonitorOrder")                 ; Monitor 1-4 = these screens (hardware ids)
+    for i, k in MonitorOrder
+        if k != ""
+            IniKv(L, i, k)
+
     IniSection(L, "MonitorRules")
     for mon, devId in MonitorRules {
         if devId != "" && devId != DEFAULT_DEVICE && devId != DISABLED_MONITOR
@@ -795,7 +808,7 @@ WriteIniNow() {
 
 LoadState() {
     global AllMode, AllDevice, AllMonitorsMode, AllMonitorsDevice, DetectedMonCount
-    DetectedMonCount := Min(Max(MonitorGetCount(), 1), MAX_MONITORS)
+    UpdateMonitorMap()
 
     AllMode := (IniRead(IniFile, "All", "Active", "0") = "1")
     AllDevice := IniRead(IniFile, "All", "Device", DEFAULT_DEVICE)
@@ -815,7 +828,7 @@ LoadState() {
 
     MonitorOverrideActive.Clear()
     for monStr, val in ReadSection("MonitorOverrideActive") {
-        if IsInteger(monStr) && val = "1" && Integer(monStr) >= 1 && Integer(monStr) <= DetectedMonCount && !IsMonitorDisabled(Integer(monStr))
+        if IsInteger(monStr) && val = "1" && MonConnected(Integer(monStr)) && !IsMonitorDisabled(Integer(monStr))
             MonitorOverrideActive[Integer(monStr)] := true
     }
 
@@ -826,7 +839,7 @@ LoadState() {
 
     PrevMonitorOverrideActive.Clear()
     for monStr, val in ReadSection("PrevMonitorOverrideActive") {
-        if IsInteger(monStr) && Integer(monStr) >= 1 && Integer(monStr) <= DetectedMonCount
+        if IsInteger(monStr) && MonConnected(Integer(monStr))
             PrevMonitorOverrideActive[Integer(monStr)] := (val = "1")
     }
 }

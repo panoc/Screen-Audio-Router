@@ -86,7 +86,7 @@ UpdateCheckDone(manual, latest, url, err) {
     if err != "" {
         LogLine("Update check: " err)
         if manual
-            ShowOsdToast("Could not check for updates :`n" err, MonitorGetPrimary(), "warn")
+            ShowOsdToast("Could not check for updates :`n" err, PrimaryMon(), "warn")
         return
     }
     LogLine("Update check: latest release " latest ", this is " APP_VERSION)
@@ -100,7 +100,7 @@ UpdateCheckDone(manual, latest, url, err) {
     } else {
         UpdateLatest := ""
         if manual
-            ShowOsdToast("Screen Audio Router is up to date (v" APP_VERSION ")", MonitorGetPrimary())
+            ShowOsdToast("Screen Audio Router is up to date (v" APP_VERSION ")", PrimaryMon())
     }
     UpdateNoticeChanged()
 }

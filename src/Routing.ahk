@@ -74,7 +74,9 @@ GetActiveMonitorDevice(mon) {
 
 SanitizeConfigConflicts(silent := false) {
     changed := false
-    Loop DetectedMonCount {
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
         mIdx := A_Index
         normDev := MonitorRules.Get(mIdx, DEFAULT_DEVICE)
         if IsMonitorDisabled(mIdx)
@@ -128,7 +130,9 @@ DetectRuleConflicts() {
         })
     }
 
-    Loop DetectedMonCount {
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
         mIdx := A_Index
         normDev := MonitorRules.Get(mIdx, DEFAULT_DEVICE)
         if IsMonitorDisabled(mIdx)
@@ -147,7 +151,9 @@ DetectRuleConflicts() {
 
     if AllMonitorsMode {
         maskedMons := []
-        Loop DetectedMonCount {
+        Loop MAX_MONITORS {
+            if !MonConnected(A_Index)
+                continue
             if MonitorOverrideActive.Get(A_Index, false)
                 maskedMons.Push("Mon " A_Index)
         }
@@ -168,7 +174,9 @@ DetectRuleConflicts() {
         }
 
         maskedMons := []
-        Loop DetectedMonCount {
+        Loop MAX_MONITORS {
+            if !MonConnected(A_Index)
+                continue
             if MonitorOverrideActive.Get(A_Index, false)
                 maskedMons.Push("Mon " A_Index)
         }
@@ -281,13 +289,13 @@ HandleDisplayChange() {
     if sig = KnownMonSignature
         return
     KnownMonSignature := sig
-    DetectedMonCount := Min(Max(MonitorGetCount(), 1), MAX_MONITORS)
+    UpdateMonitorMap()
     DevicesStale := true     ; HDMI/DP audio endpoints come and go with monitors
     GuiDirty := true         ; monitor states are rebuilt before the window is next shown
 
     Loop MAX_MONITORS {
         mIdx := A_Index
-        if mIdx <= DetectedMonCount && !IsMonitorDisabled(mIdx) {
+        if MonConnected(mIdx) && !IsMonitorDisabled(mIdx) {
             if !RegMonHotkeys.Has(mIdx) && MonHotkeys.Has(mIdx)
                 RegisterMonitorHotkey(mIdx, MonHotkeys[mIdx], true)
         } else {
@@ -701,7 +709,9 @@ AssignedDeviceUses() {
     if DisableAllRouting
         return uses
     if !DisableMonitorRouting {
-        Loop DetectedMonCount {
+        Loop MAX_MONITORS {
+            if !MonConnected(A_Index)
+                continue
             m := A_Index
             if IsMonitorDisabled(m)
                 continue
@@ -727,7 +737,9 @@ AssignedDeviceUses() {
     }
     if MicRoutingActive() {                        ; microphones of the monitors and active Mic overrides
         if !DisableMonitorRouting {
-            Loop DetectedMonCount {
+            Loop MAX_MONITORS {
+                if !MonConnected(A_Index)
+                    continue
                 m := A_Index
                 if IsMonitorDisabled(m)
                     continue
@@ -919,7 +931,7 @@ GetRoutingTarget(app, mon) {
         cands.Push(AllDevice)
     if !DisableAppRouting && AppFixedDevice.Has(app)          ; "Follow monitor" unticked
         cands.Push(AppFixedDevice[app])
-    monOk := mon && mon <= DetectedMonCount
+    monOk := mon && MonConnected(mon)
     if !(monOk && IsMonitorDisabled(mon)) && !DisableMonitorRouting && mon {
         if AllMonitorsMode
             cands.Push(AllMonitorsDevice)
@@ -1069,7 +1081,7 @@ ToggleAppOverrideByName(app, *) {
 
 ToggleMonitorOverrideByIndex(mIdx, *) {
     global AllMode, AllMonitorsMode
-    if mIdx < 1 || mIdx > DetectedMonCount {
+    if !MonConnected(mIdx) {
         Tip("Monitor " mIdx " is not currently detected")
         return
     }
@@ -1449,11 +1461,252 @@ WindowRestoreRect(hwnd) {
     return {l: l, t: t, r: r, b: b}
 }
 
+; The monitor (number in this app) at a screen point, 0 = none.
 MonitorAt(px, py) {
-    Loop Min(MonitorGetCount(), MAX_MONITORS) {
+    Loop MonitorGetCount() {
         MonitorGet(A_Index, &l, &t, &r, &b)
         if px >= l && px < r && py >= t && py < b
-            return A_Index
+            return WinMon.Get(A_Index, 0)
     }
     return 0
+}
+
+; ------------------------------ MONITOR NUMBERS -----------------------------
+; Monitors have their own numbers in this app (Monitor 1-4), set in the Devices window.
+; Every monitor setting (Output, Ovrd, Mic, Enabled, hotkey) is stored under that number,
+; and the number belongs to a physical screen, found by its hardware id. So the settings
+; stay with the right screen when Windows numbers its monitors differently (after a
+; monitor is unplugged, a driver update, ...). MonWin / WinMon translate between the two.
+
+; Hardware id of Windows' monitor winIdx: "DEL41A6#5&2d4b3f1c&0&UID4353" (model # connection).
+MonitorHwKey(winIdx) {
+    try name := MonitorGetName(winIdx)
+    catch
+        return ""
+    dd := Buffer(840, 0)                            ; DISPLAY_DEVICEW
+    NumPut("UInt", 840, dd, 0)
+    if DllCall("EnumDisplayDevicesW", "Str", name, "UInt", 0, "Ptr", dd, "UInt", 1) {   ; EDD_GET_DEVICE_INTERFACE_NAME
+        id := StrGet(dd.Ptr + 328, 128, "UTF-16")
+        if RegExMatch(id, "i)DISPLAY#([^#]+#[^#]+)", &m)
+            return m[1]
+        if id != ""
+            return id
+    }
+    return name
+}
+
+MonitorModel(key) {
+    return StrSplit(key, "#")[1]
+}
+
+; The name Device Manager shows for a screen (its hardware id), e.g. "Dell SE2723DS (DisplayPort)".
+; For a "Generic PnP Monitor" the name the screen reports itself (EDID) is used instead.
+; "" when not found (the model code is shown then).
+MonitorFriendlyName(key) {
+    static cache := Map()
+    if cache.Has(key)
+        return cache[key]
+    name := ""
+    parts := StrSplit(key, "#")
+    if parts.Length >= 2 {
+        reg := "HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\" parts[1] "\" parts[2]
+        try name := RegRead(reg, "FriendlyName")
+        if name = "" {
+            try name := RegRead(reg, "DeviceDesc")
+        }
+        if p := InStr(name, ";", , -1)                  ; "@monitor.inf,%...%;Generic PnP Monitor"
+            name := SubStr(name, p + 1)
+        if name = "" || InStr(name, "Generic") {
+            edidName := ""
+            try edidName := EdidMonitorName(RegRead(reg "\Device Parameters", "EDID"))
+            if edidName != ""
+                name := edidName
+        }
+    }
+    cache[key] := Trim(name)
+    return cache[key]
+}
+
+; The monitor name stored in an EDID (hex string from RegRead), "" if there is none.
+EdidMonitorName(hex) {
+    byte(i) => ("0x" SubStr(hex, i * 2 + 1, 2)) + 0
+    if StrLen(hex) < 256
+        return ""
+    for off in [54, 72, 90, 108] {                  ; the four 18-byte descriptors
+        if byte(off) = 0 && byte(off + 1) = 0 && byte(off + 3) = 0xFC {
+            s := ""
+            Loop 13 {
+                c := byte(off + 4 + A_Index)
+                if c = 0x0A || c = 0
+                    break
+                s .= Chr(c)
+            }
+            return Trim(s)
+        }
+    }
+    return ""
+}
+
+MonConnected(m) {
+    return MonWin.Has(m)
+}
+
+; The main screen's number in this app.
+PrimaryMon() {
+    return WinMon.Get(MonitorGetPrimary(), 1)
+}
+
+; Matches the connected screens to the monitor numbers. A screen seen before keeps its
+; number; the same model on another connection (driver update, other port) takes over its
+; number; a new screen gets a free number, or the number of one that is not connected.
+; The first time (settings of an older version), the numbers are Windows' own.
+UpdateMonitorMap() {
+    global DetectedMonCount
+    keys := Map()
+    Loop MonitorGetCount()
+        keys[A_Index] := MonitorHwKey(A_Index)
+    changed := false
+    anyKnown := false
+    for k in MonitorOrder
+        if k != ""
+            anyKnown := true
+    if !anyKnown {
+        for w, k in keys {
+            if w <= MAX_MONITORS
+                MonitorOrder[w] := k
+        }
+        changed := true
+    }
+    MonWin.Clear(), WinMon.Clear()
+    link(slot, w) {
+        MonWin[slot] := w
+        WinMon[w] := slot
+    }
+    pending := []
+    for w, k in keys {
+        slot := 0
+        for i, ok in MonitorOrder {
+            if ok != "" && ok = k && !MonWin.Has(i) {
+                slot := i
+                break
+            }
+        }
+        if slot
+            link(slot, w)
+        else
+            pending.Push(w)
+    }
+    still := []
+    for w in pending {
+        slot := 0
+        for i, ok in MonitorOrder {
+            if ok != "" && !MonWin.Has(i) && MonitorModel(ok) = MonitorModel(keys[w]) {
+                slot := i
+                break
+            }
+        }
+        if slot {
+            MonitorOrder[slot] := keys[w], changed := true
+            link(slot, w)
+        } else
+            still.Push(w)
+    }
+    for w in still {
+        slot := 0
+        for i, ok in MonitorOrder {
+            if ok = "" {
+                slot := i
+                break
+            }
+        }
+        if !slot {
+            for i, ok in MonitorOrder {
+                if !MonWin.Has(i) {
+                    slot := i
+                    break
+                }
+            }
+        }
+        if !slot
+            continue                                ; more than 4 screens
+        MonitorOrder[slot] := keys[w], changed := true
+        link(slot, w)
+    }
+    DetectedMonCount := MonWin.Count
+    if changed
+        SetTimer(SaveConfig, -3000)
+}
+
+; New monitor numbers from the Devices window: newOrder[number] = hardware id. Every monitor
+; setting moves with its screen. Returns true when something changed.
+ApplyMonitorOrder(newOrder) {
+    global GuiDirty
+    moveTo := Map()                                 ; old number -> new number
+    for newSlot, k in newOrder {
+        if k = ""
+            continue
+        for oldSlot, ok in MonitorOrder {
+            if ok = k {
+                moveTo[oldSlot] := newSlot
+                break
+            }
+        }
+    }
+    usedNew := Map()
+    for o, n in moveTo
+        usedNew[n] := true
+    freeNew := []
+    Loop MAX_MONITORS
+        if !usedNew.Has(A_Index)
+            freeNew.Push(A_Index)
+    fi := 1
+    Loop MAX_MONITORS {
+        if !moveTo.Has(A_Index)
+            moveTo[A_Index] := freeNew[fi++]
+    }
+    changed := false
+    for o, n in moveTo
+        if o != n
+            changed := true
+    if !changed
+        return false
+
+    for m, hk in RegMonHotkeys
+        try Hotkey(hk, "Off")
+    RegMonHotkeys.Clear()
+    for mp in [MonitorRules, MonitorOverrideRules, MonitorOverrideActive, PrevMonitorOverrideActive
+             , MonitorOff, MonHotkeys, MonMicOn, MonMicDevice] {
+        old := mp.Clone()
+        mp.Clear()
+        for k, v in old
+            mp[(IsInteger(k) && moveTo.Has(k)) ? moveTo[k] : k] := v
+    }
+    for mp in [LastSeen, AnchorPending] {
+        for app, m in mp.Clone()
+            if IsInteger(m) && moveTo.Has(m)
+                mp[app] := moveTo[m]
+    }
+    for app, r in LastRouted
+        if IsObject(r) && r.HasOwnProp("mon") && moveTo.Has(r.mon)
+            r.mon := moveTo[r.mon]
+    oldOrder := MonitorOrder.Clone()
+    for o, n in moveTo
+        MonitorOrder[n] := oldOrder[o]
+    UpdateMonitorMap()
+    MonHkControls.Clear()                           ; the window is rebuilt below
+    for m, hk in MonHotkeys.Clone()
+        if hk != "" && MonConnected(m) && !IsMonitorDisabled(m)
+            RegisterMonitorHotkey(m, hk, true)
+    SaveConfig()
+    SaveState()
+    GuiDirty := true
+    SetupTrayMenu()
+    UpdateTrayIndicators()
+    try {
+        if IsObject(MainGui) && DllCall("IsWindowVisible", "Ptr", MainGui.Hwnd)
+            RebuildMainGuiIfNeeded(true)
+    }
+    ReapplyAll(false, true)
+    LogLine("Monitor numbers changed : " JoinStrings(MonitorOrder, " | "))
+    return true
 }

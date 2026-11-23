@@ -414,7 +414,7 @@ AppMicTarget(app) {
 
 ; The microphone a monitor gives the apps on it.
 MonitorMic(mon) {
-    if !mon || mon > DetectedMonCount || DisableMonitorRouting || IsMonitorDisabled(mon)
+    if !mon || !MonConnected(mon) || DisableMonitorRouting || IsMonitorDisabled(mon)
         return DEFAULT_CAPTURE_DEVICE
     if MonitorOverrideActive.Get(mon, false) && MonMicOn.Has(mon)
         return MonMicTarget(mon)

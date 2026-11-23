@@ -360,7 +360,7 @@ QuickAddAppFromTitleBar(exe, winHwnd, activateOverride := false, overrideDevId :
         }
     }
     if !mon
-        mon := LastSeen.Get(exe, MonitorGetPrimary())
+        mon := LastSeen.Get(exe, PrimaryMon())
 
     if activateOverride {
         if overrideDevId = DEFAULT_DEVICE
@@ -426,11 +426,8 @@ ShowOsdToast(text, targetMon := 1, kind := "") {
     Critical
     SetTimer(HideOsdToast, 0)
 
-    cnt := Max(MonitorGetCount(), 1)
-    if targetMon < 1 || targetMon > cnt
-        targetMon := MonitorGetPrimary()
-
-    MonitorGetWorkArea(targetMon, &wl, &wt, &wr, &wb)
+    winIdx := MonWin.Get(targetMon, 0) || MonitorGetPrimary()      ; targetMon = monitor number in this app
+    MonitorGetWorkArea(winIdx, &wl, &wt, &wr, &wb)
 
     try {
         if IsObject(OsdGui)
@@ -501,7 +498,7 @@ SetupTrayMenu() {
 
     Loop MAX_MONITORS {
         mIdx := A_Index
-        isConnected := (mIdx <= DetectedMonCount)
+        isConnected := MonConnected(mIdx)
         if isConnected && !IsMonitorDisabled(mIdx) {
             ovrDev := ShortDeviceName(MonitorOverrideRules.Get(mIdx, DEFAULT_DEVICE))
             mHk := MonHotkeys.Get(mIdx, "")
@@ -546,7 +543,9 @@ SetupTrayMenu() {
         activeCount++
     }
 
-    Loop DetectedMonCount {
+    Loop MAX_MONITORS {
+        if !MonConnected(A_Index)
+            continue
         mIdx := A_Index
         if MonitorOverrideActive.Get(mIdx, false) {
             ovrDev := ShortDeviceName(MonitorOverrideRules.Get(mIdx, DEFAULT_DEVICE))
@@ -745,7 +744,9 @@ UpdateTrayIndicators() {
             reasons.Push("monitor routing off")
         if DisableAppRouting
             reasons.Push("app routing off")
-        Loop DetectedMonCount {
+        Loop MAX_MONITORS {
+            if !MonConnected(A_Index)
+                continue
             if IsMonitorDisabled(A_Index)
                 reasons.Push("monitor " A_Index " disabled")
         }
@@ -770,7 +771,9 @@ UpdateTrayIndicators() {
                 ; Monitors that exist and are not set to Disabled; if all of them are
                 ; overridden, one All-Monitors icon replaces the separate ones.
                 active := [], usable := 0
-                Loop Min(DetectedMonCount, 4) {
+                Loop MAX_MONITORS {
+                    if !MonConnected(A_Index)
+                        continue
                     if IsMonitorDisabled(A_Index)
                         continue
                     usable++
@@ -981,9 +984,23 @@ PurgeDeadControlMaps() {
 
 ; ------------------------------ TRAY & OSD HELPERS --------------------------
 ShowMonitorNumbers(*) {
-    Loop Min(MonitorGetCount(), MAX_MONITORS) {
-        MonitorGet(A_Index, &l, &t, &r, &b)
-        ToolTip("Monitor " A_Index, (l + r) // 2 - 40, (t + b) // 2 - 15, 10 + A_Index)
+    ShowMonitorNumbersFor(MonitorOrder)
+}
+
+; order: monitor number -> hardware id (the Devices window passes its not yet saved order).
+ShowMonitorNumbersFor(order) {
+    ClearMonitorTips()
+    Loop Min(MonitorGetCount(), 10) {
+        w := A_Index
+        num := "?"
+        if WinMon.Has(w) {
+            k := MonitorOrder[WinMon[w]]
+            for i, ok in order
+                if ok = k
+                    num := i
+        }
+        MonitorGet(w, &l, &t, &r, &b)
+        ToolTip("Monitor " num, (l + r) // 2 - 40, (t + b) // 2 - 15, 10 + w)
     }
     SetTimer(ClearMonitorTips, -3000)
 }
